@@ -1,0 +1,58 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Commax Wallpad (MITM router)",
+        "description": "Connect via SSH to the OpenWrt router running the pure-bridge query helpers. wallpad-l2-mitm.sh must be active on the router.",
+        "data": {
+          "host": "Router IP address",
+          "port": "SSH port",
+          "username": "SSH username",
+          "password": "SSH password",
+          "elevator_index": "Elevator index (getEvStatus 'in' parameter, usually 0)"
+        }
+      }
+    },
+    "error": {
+      "invalid_auth": "Invalid SSH credentials",
+      "cannot_connect": "Could not connect to the router over SSH"
+    },
+    "abort": {
+      "already_configured": "This router/index is already configured"
+    }
+  },
+  "entity": {
+    "button": {
+      "call_elevator": { "name": "Call elevator" }
+    },
+    "sensor": {
+      "floor": { "name": "Floor" },
+      "direction": { "name": "Direction" },
+      "status": { "name": "Elevator status" },
+      "realtime_electric_power": { "name": "Real-time electric power" },
+      "realtime_gas_flow": { "name": "Real-time gas flow" },
+      "realtime_water_flow": { "name": "Real-time water flow" },
+      "estimated_gas_consumption": { "name": "Estimated gas consumption" },
+      "estimated_water_consumption": { "name": "Estimated water consumption" },
+      "last_visitor": { "name": "Last visitor" },
+      "visitor_archive": { "name": "Visitor archive" }
+    },
+    "image": {
+      "latest_visitor": { "name": "Latest visitor image" }
+    },
+    "binary_sensor": {
+      "visitor_call_active": { "name": "Visitor call active" },
+      "metering_stream": { "name": "Metering connection" }
+    },
+    "event": {
+      "visitor": { "name": "Visitor" },
+      "visitor_call": { "name": "Visitor call" }
+    }
+  },
+  "services": {
+    "fast_poll": {
+      "name": "Fast-poll elevator",
+      "description": "Temporarily switch the elevator floor/direction sensors to 1-second polling (normally 30s). Use it manually only when the wallpad is not also tracking the elevator. It reverts once idle for a few seconds, or after 2 minutes regardless."
+    }
+  }
+}

@@ -1,0 +1,58 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "코맥스 월패드 (MITM 라우터)",
+        "description": "순수 브리지 조회 도우미가 설치된 OpenWrt 라우터에 SSH로 접속합니다. 라우터에서 wallpad-l2-mitm.sh가 활성화되어 있어야 합니다.",
+        "data": {
+          "host": "라우터 IP 주소",
+          "port": "SSH 포트",
+          "username": "SSH 사용자명",
+          "password": "SSH 비밀번호",
+          "elevator_index": "엘리베이터 인덱스 (getEvStatus 'in' 파라미터, 보통 0)"
+        }
+      }
+    },
+    "error": {
+      "invalid_auth": "SSH 인증 정보가 올바르지 않습니다",
+      "cannot_connect": "라우터에 SSH로 연결할 수 없습니다"
+    },
+    "abort": {
+      "already_configured": "이미 등록된 라우터/인덱스입니다"
+    }
+  },
+  "entity": {
+    "button": {
+      "call_elevator": { "name": "엘리베이터 호출" }
+    },
+    "sensor": {
+      "floor": { "name": "층수" },
+      "direction": { "name": "운행 방향" },
+      "status": { "name": "엘리베이터 상태" },
+      "realtime_electric_power": { "name": "실시간 전력" },
+      "realtime_gas_flow": { "name": "실시간 가스 유량" },
+      "realtime_water_flow": { "name": "실시간 수도 유량" },
+      "estimated_gas_consumption": { "name": "추정 가스 사용량" },
+      "estimated_water_consumption": { "name": "추정 수도 사용량" },
+      "last_visitor": { "name": "마지막 방문자" },
+      "visitor_archive": { "name": "방문자 아카이브" }
+    },
+    "image": {
+      "latest_visitor": { "name": "최근 방문자 사진" }
+    },
+    "binary_sensor": {
+      "visitor_call_active": { "name": "실시간 방문자 호출" },
+      "metering_stream": { "name": "검침 연결 상태" }
+    },
+    "event": {
+      "visitor": { "name": "방문자 감지" },
+      "visitor_call": { "name": "방문자 호출 상태" }
+    }
+  },
+  "services": {
+    "fast_poll": {
+      "name": "엘리베이터 빠른 폴링",
+      "description": "엘리베이터 층수/방향 센서를 1초 간격으로 잠깐 전환합니다 (평소엔 30초). 월패드가 엘리베이터를 조회하지 않을 때만 수동으로 사용하세요. 정지 상태가 몇 초 지속되거나 2분이 지나면 자동으로 원래 속도로 돌아갑니다."
+    }
+  }
+}
