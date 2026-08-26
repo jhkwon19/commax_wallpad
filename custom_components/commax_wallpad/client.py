@@ -22,8 +22,17 @@ import warnings
 # CryptographyDeprecationWarning이 뜬다. 무해한 경고지만 HA 로그에는 눈에
 # 띄는 경고로 남는다. HA 인스턴스의 다른 무관한 경고까지 가리지 않도록 이
 # import 구간에만 범위를 좁혀서 숨긴다.
+#
+# cryptography 패키지는 이 경고를 일부러 DeprecationWarning이 아니라
+# UserWarning의 서브클래스로 만들어서 기본 필터에 안 걸리게 해놨다
+# (그래서 `simplefilter("ignore", DeprecationWarning)`만으로는 안 잡힌다 —
+# 2026-08-26 실사용 로그로 확인). CryptographyDeprecationWarning을 직접
+# 잡아야 한다.
 with warnings.catch_warnings():
     warnings.simplefilter("ignore", DeprecationWarning)
+    from cryptography.utils import CryptographyDeprecationWarning
+
+    warnings.simplefilter("ignore", CryptographyDeprecationWarning)
     import asyncssh
 
 _LOGGER = logging.getLogger(__name__)
