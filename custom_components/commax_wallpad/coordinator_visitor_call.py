@@ -18,6 +18,16 @@ _LOGGER = logging.getLogger(__name__)
 _MONITOR_HELPER = "/root/wallpad-visitor-call-monitor.sh"
 _RECONNECT_DELAYS = (1, 2, 5, 10, 30)
 _LOCATION_BY_PLACE = {"2": "세대현관", "5": "공동현관"}
+# place만으로는 공동현관 여러 개(지하 주차장 출입구 등)를 구분할 수 없다 —
+# 다 같은 place="5"로 찍힌다. SIP DisplayName은 게이트마다 달라서
+# (lobby0105/0106/0107 실측 확인, 2026-08-26) 이걸로 세분화한다. 알려지지
+# 않은 DisplayName은 _LOCATION_BY_PLACE의 일반 "공동현관"으로 자연히
+# 폴백된다.
+_LOBBY_LOCATION_BY_DISPLAY_NAME = {
+    "lobby0105": "공동현관(1층)",
+    "lobby0106": "공동현관(지하1층)",
+    "lobby0107": "공동현관(지하2층)",
+}
 _METER_SORTS = {"electricMeter", "gasMeter", "waterMeter"}
 
 
@@ -137,11 +147,12 @@ class VisitorCallCoordinator(DataUpdateCoordinator[dict]):
         if len(parts) == 4 and parts[0] == "metering":
             await self._async_handle_metering(parts[2], parts[3])
             return
-        if len(parts) != 3 or parts[0] not in {"ringing", "ended"}:
+        if len(parts) not in (3, 4) or parts[0] not in {"ringing", "ended"}:
             if line:
                 _LOGGER.debug("Ignoring visitor call monitor output: %s", line[:200])
             return
-        event_type, place, raw_epoch = parts
+        event_type, place, raw_epoch = parts[0], parts[1], parts[2]
+        display_name = parts[3] if len(parts) == 4 else ""
         self._reconnect_attempt = 0
         try:
             event_time = datetime.fromtimestamp(int(raw_epoch), tz=UTC)
@@ -150,7 +161,9 @@ class VisitorCallCoordinator(DataUpdateCoordinator[dict]):
             return
 
         self._event_sequence += 1
-        location = _LOCATION_BY_PLACE.get(place, "알 수 없음")
+        location = _LOBBY_LOCATION_BY_DISPLAY_NAME.get(
+            display_name
+        ) or _LOCATION_BY_PLACE.get(place, "알 수 없음")
         updated = {
             **self.data,
             "connected": True,
