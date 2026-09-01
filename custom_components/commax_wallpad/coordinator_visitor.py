@@ -66,11 +66,17 @@ def _parse_metadata(body: str) -> dict[str, str]:
     required = {"filename", "uid", "captured_at", "flags", "marker"}
     missing = required - parsed.keys()
     if missing:
-        raise ValueError(f"missing visitor metadata fields: {sorted(missing)}")
+        raise ValueError(
+            f"missing visitor metadata fields: {sorted(missing)} "
+            f"(helper output: {body[:300]!r})"
+        )
     filename_data = _metadata_from_filename(parsed["filename"])
     for key in ("uid", "captured_at", "flags"):
         if parsed[key] != filename_data[key]:
-            raise ValueError(f"visitor {key} does not match filename")
+            raise ValueError(
+                f"visitor {key} does not match filename "
+                f"(helper output: {body[:300]!r})"
+            )
     parsed["location"] = filename_data["location"]
     return parsed
 
