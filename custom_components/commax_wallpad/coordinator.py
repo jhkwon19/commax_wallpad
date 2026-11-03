@@ -12,7 +12,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import re
-from datetime import datetime, timedelta
+from datetime import datetime
 
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
@@ -26,10 +26,6 @@ from .const import (
     ELEVATOR_FAILURES_BEFORE_UNAVAILABLE,
     ELEVATOR_MAX_ATTEMPTS,
     ELEVATOR_RETRY_DELAY_SECONDS,
-    FAST_POLL_MAX_DURATION_SECONDS,
-    FAST_POLL_SETTLE_SECONDS,
-    FAST_SCAN_INTERVAL_SECONDS,
-    SCAN_INTERVAL_SECONDS,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -48,13 +44,13 @@ def _build_remote_command(elevator_index: int) -> str:
 
     stderr를 stdout에 합쳐서, 도우미 초반 실패(조회 락 타임아웃, 조회
     브리지 미준비 등)가 원인 불명의 빈 응답으로만 보이지 않고 HA 로그에
-    드러나게 한다.
+    드러나게 한다 — coordinator_energy.py의 도우미 명령과 동일한 이유.
     """
     return f"{_QUERY_HELPER} {int(elevator_index)} 2>&1"
 
 
 class ElevatorCoordinator(DataUpdateCoordinator[dict]):
-    """SSH로 MITM 라우터를 통해 엘리베이터 층수/방향을 폴링한다."""
+    """사용자가 요청할 때만 엘리베이터 상태를 조회한다."""
 
     def __init__(
         self,
@@ -66,66 +62,26 @@ class ElevatorCoordinator(DataUpdateCoordinator[dict]):
             hass,
             _LOGGER,
             name="commax_wallpad_elevator",
-            update_interval=timedelta(seconds=SCAN_INTERVAL_SECONDS),
+            update_interval=None,
         )
         self._client = client
         # 인덱스는 int로 고정해 원격 셸 명령에 임의 문자열이 들어갈 수 없게 한다.
         self._remote_command = _build_remote_command(elevator_index)
-        self._fast_until: datetime | None = None
-        self._idle_since: datetime | None = None
         self._consecutive_failures = 0
+        self.last_successful_update: datetime | None = None
+        self.last_refresh_error: str | None = None
+        self._manual_refresh_lock = asyncio.Lock()
+        # Loading entities must never trigger a getEvStatus request.
+        self.async_set_updated_data({})
 
-    async def async_start_fast_poll(self) -> None:
-        """FAST_SCAN_INTERVAL_SECONDS로 전환한다 — 예: 호출 버튼을 누른 직후.
-
-        차량이 FAST_POLL_SETTLE_SECONDS만큼 정지(idle) 상태로 머물거나,
-        FAST_POLL_MAX_DURATION_SECONDS가 지나면(안전장치) 자동으로
-        원래 속도로 복귀한다 — _maybe_revert_to_idle_rate() 참고.
-        """
-        now = dt_util.utcnow()
-        self._fast_until = now + timedelta(seconds=FAST_POLL_MAX_DURATION_SECONDS)
-        self._idle_since = None
-        self.update_interval = timedelta(seconds=FAST_SCAN_INTERVAL_SECONDS)
-
-        # DataUpdateCoordinator는 *예약된* refresh가 끝나야만 그 시점의
-        # update_interval로 다음 타이머를 다시 잡는다. 지금처럼 수동으로
-        # refresh를 요청하면 기존에 걸려 있던 타이머는 그대로 남기 때문에,
-        # update_interval만 바꿔서는 그 낡은 타이머가 스스로 울릴 때까지
-        # 반영되지 않는다 — 최악의 경우 예전 간격만큼 늦어져서 운행이 이미
-        # 끝난 뒤일 수도 있다. 그래서 기존 타이머를 취소해서, 아래 refresh가
-        # 새로 정한 빠른 속도로 바로 다시 예약되게 한다.
-        unsub_refresh = getattr(self, "_unsub_refresh", None)
-        if unsub_refresh:
-            unsub_refresh()
-            self._unsub_refresh = None
-
-        await self.async_request_refresh()
-
-    def _maybe_revert_to_idle_rate(self, direction: str) -> None:
-        if self._fast_until is None:
-            return  # already at idle rate
-
-        now = dt_util.utcnow()
-        if now >= self._fast_until:
-            _LOGGER.debug("Fast-poll safety cap reached, reverting to idle rate")
-            self._fast_until = None
-            self._idle_since = None
-            self.update_interval = timedelta(seconds=SCAN_INTERVAL_SECONDS)
-            return
-
-        # 운행이 다시 감지되면 정지 누적 시간을 초기화한다. 잠깐 0이 들어온 것만으로
-        # 느린 폴링으로 복귀하지 않도록 연속 정지 시간을 요구한다.
-        if direction != DIRECTION_IDLE:
-            self._idle_since = None
-            return
-
-        if self._idle_since is None:
-            self._idle_since = now
-        elif (now - self._idle_since).total_seconds() >= FAST_POLL_SETTLE_SECONDS:
-            _LOGGER.debug("Elevator settled at idle, reverting to idle rate")
-            self._fast_until = None
-            self._idle_since = None
-            self.update_interval = timedelta(seconds=SCAN_INTERVAL_SECONDS)
+    async def async_refresh_once(self) -> None:
+        """사용자 요청 한 번을 처리하고 자동 갱신은 예약하지 않는다."""
+        if self._manual_refresh_lock.locked():
+            raise UpdateFailed("Elevator refresh is already in progress")
+        async with self._manual_refresh_lock:
+            await self.async_refresh()
+            if self.last_refresh_error or not self.last_update_success:
+                raise UpdateFailed(self.last_refresh_error or str(self.last_exception))
 
     async def _async_update_data(self) -> dict:
         # HA는 아파트망에 직접 연결되지 않는다. 모든 조회는 SSH를 통해 라우터의
@@ -137,6 +93,7 @@ class ElevatorCoordinator(DataUpdateCoordinator[dict]):
         # 생긴다. 실패할 때마다 바로 UpdateFailed를 던지는 대신 한 번 짧게
         # 재시도하고, 그래도 안 되면 최근 값을 잠깐 유지해서 일회성 실패가
         # 로그 오류나 unavailable로 새지 않게 한다.
+        self.last_refresh_error = None
         failure_details: list[str] = []
         for attempt in range(1, ELEVATOR_MAX_ATTEMPTS + 1):
             try:
@@ -147,6 +104,7 @@ class ElevatorCoordinator(DataUpdateCoordinator[dict]):
                 floor_match = _FLOOR_RE.search(body)
                 if floor_match:
                     self._consecutive_failures = 0
+                    self.last_successful_update = dt_util.utcnow()
                     return self._parse_result(body, floor_match)
                 failure_details.append(
                     f"attempt {attempt}: no carFloor found (helper output: "
@@ -158,9 +116,10 @@ class ElevatorCoordinator(DataUpdateCoordinator[dict]):
 
         self._consecutive_failures += 1
         detail = "; ".join(failure_details)
+        self.last_refresh_error = detail
 
         if (
-            self.data is not None
+            self.last_successful_update is not None
             and self._consecutive_failures < ELEVATOR_FAILURES_BEFORE_UNAVAILABLE
         ):
             _LOGGER.warning(
@@ -190,9 +149,6 @@ class ElevatorCoordinator(DataUpdateCoordinator[dict]):
         signed_floor = -raw_floor if is_basement else raw_floor
         floor_label = f"B{raw_floor}" if is_basement else str(raw_floor)
         direction = DIRECTION_MAP.get(direction_code, DIRECTION_UNKNOWN)
-
-        # 파싱된 최신 방향을 빠른 폴링 종료 판단에도 사용한다.
-        self._maybe_revert_to_idle_rate(direction)
 
         return {
             "floor": signed_floor,

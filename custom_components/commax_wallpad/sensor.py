@@ -80,6 +80,15 @@ class _ElevatorEntityBase(_CommaxEntityBase):
             model="CDP-1020MB elevator link (MITM)",
         )
 
+    @property
+    def extra_state_attributes(self) -> dict:
+        last_success = self.coordinator.last_successful_update
+        return {
+            "update_mode": "manual",
+            "last_refresh_error": self.coordinator.last_refresh_error,
+            "last_successful_update": last_success.isoformat() if last_success else None,
+        }
+
 
 class _RealtimeMeterEntityBase(_CommaxEntityBase):
     """PAM 순간 검침 엔티티를 별도 기기로 묶는 공통 기반."""
@@ -164,6 +173,7 @@ class ElevatorFloorSensor(_ElevatorEntityBase):
             return {}
         # 화면 표시값은 "B2"지만 자동화에서는 floor_numeric=-2를 사용할 수 있다.
         return {
+            **super().extra_state_attributes,
             "floor_numeric": self.coordinator.data.get("floor"),
             "is_basement": self.coordinator.data.get("is_basement"),
             "raw_floor": self.coordinator.data.get("raw_floor"),
@@ -198,7 +208,10 @@ class ElevatorDirectionSensor(_ElevatorEntityBase):
     def extra_state_attributes(self) -> dict:
         if self.coordinator.data is None:
             return {}
-        return {"direction_code": self.coordinator.data.get("direction_code")}
+        return {
+            **super().extra_state_attributes,
+            "direction_code": self.coordinator.data.get("direction_code"),
+        }
 
 
 class ElevatorStatusSensor(_ElevatorEntityBase):
@@ -227,13 +240,16 @@ class ElevatorStatusSensor(_ElevatorEntityBase):
         if self.coordinator.data is None:
             return None
         code = self.coordinator.data.get("ev_status")
-        return EV_STATUS_MAP.get(code, EV_STATUS_UNKNOWN)
+        return EV_STATUS_MAP.get(code, EV_STATUS_UNKNOWN) if code is not None else None
 
     @property
     def extra_state_attributes(self) -> dict:
         if self.coordinator.data is None:
             return {}
-        return {"ev_status_code": self.coordinator.data.get("ev_status")}
+        return {
+            **super().extra_state_attributes,
+            "ev_status_code": self.coordinator.data.get("ev_status"),
+        }
 
 
 class RealtimeElectricPowerSensor(_RealtimeMeterEntityBase):

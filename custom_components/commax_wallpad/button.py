@@ -38,7 +38,10 @@ async def async_setup_entry(
     # __init__.py가 만든 공유 SSH client와 층/방향 coordinator를 재사용한다.
     data = hass.data[DOMAIN][entry.entry_id]
     async_add_entities(
-        [ElevatorCallButton(data["client"], data["elevator"], entry)]
+        [
+            ElevatorCallButton(data["client"], data["elevator"], entry),
+            ElevatorRefreshButton(data["elevator"], entry),
+        ]
     )
 
 
@@ -73,9 +76,7 @@ class ElevatorCallButton(ButtonEntity):
         async with self._press_lock:
             # 앱도 evStatus가 정상(1)이 아니면 호출 버튼을 비활성화한다 —
             # 점검중/고장/화재운행 중에 호출을 보내면 무의미하거나 위험할 수
-            # 있으므로 같은 가드를 여기서도 둔다. coordinator.data는
-            # async_config_entry_first_refresh() 이후에만 이 버튼이 생성되므로
-            # None인 경우는 없지만, 방어적으로 확인한다.
+            # 있으므로 같은 가드를 여기서도 둔다. 수동 조회 전에는 상태를 모른다.
             status = (self._coordinator.data or {}).get("ev_status")
             if status is not None and status != EV_STATUS_NORMAL:
                 label = EV_STATUS_MAP.get(status, EV_STATUS_UNKNOWN)
@@ -104,3 +105,24 @@ class ElevatorCallButton(ButtonEntity):
             self._last_call_at = monotonic()
             # 호출 직후 월패드도 자체 상태조회를 시작한다. 여기서 HA의 1초
             # 폴링까지 자동 실행하면 두 조회가 겹칠 수 있으므로 호출만 끝낸다.
+
+
+class ElevatorRefreshButton(ButtonEntity):
+    """엘리베이터 상태/방향/층수를 한 번만 새로 읽는다."""
+
+    _attr_has_entity_name = True
+    _attr_translation_key = "refresh_elevator"
+    _attr_icon = "mdi:refresh"
+
+    def __init__(self, coordinator: ElevatorCoordinator, entry: ConfigEntry) -> None:
+        self._coordinator = coordinator
+        self._attr_unique_id = f"{entry.entry_id}_refresh_elevator"
+        self._attr_device_info = DeviceInfo(
+            identifiers={(DOMAIN, f"{entry.entry_id}-elevator")},
+            name=f"Commax 엘리베이터 ({entry.data[CONF_HOST]})",
+            manufacturer="Commax",
+            model="CDP-1020MB elevator link (MITM)",
+        )
+
+    async def async_press(self) -> None:
+        await self._coordinator.async_refresh_once()

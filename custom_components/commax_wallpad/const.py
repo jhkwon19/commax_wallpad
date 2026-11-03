@@ -8,12 +8,6 @@ DEFAULT_PORT = 22
 DEFAULT_USERNAME = "root"
 DEFAULT_ELEVATOR_INDEX = 0
 
-# 평상시에는 공용 서버 부하를 줄이고, 실제 호출 직후에만 빠르게 조회한다.
-SCAN_INTERVAL_SECONDS = 30  # 평상시/백그라운드 속도 — 운행 중 빠른 폴링은 아래 참고
-FAST_SCAN_INTERVAL_SECONDS = 1  # 운행을 실시간 추적하는 동안의 속도
-FAST_POLL_MAX_DURATION_SECONDS = 120  # 정지 감지가 끝내 안 될 때의 안전장치
-FAST_POLL_SETTLE_SECONDS = 8  # 이 시간(초)만큼 연속으로 정지 상태면 평상시 속도로 복귀
-
 # 조회할 때마다 lan1의 flood/learning을 순간적으로 끄고 중복 IP 소켓으로
 # 실제 월패드 트래픽과 경합하기 때문에(wallpad-elevator-query.sh 참고),
 # carFloor가 도착하기 전에 SOAP 응답이 잘리는 일이 가끔 생긴다. 짧은 재시도
@@ -24,6 +18,8 @@ ELEVATOR_RETRY_DELAY_SECONDS = 1
 # 단발 실패마다 엔티티를 곧장 unavailable로 바꾸지 않는다.
 ELEVATOR_FAILURES_BEFORE_UNAVAILABLE = 3
 
+SERVICE_REFRESH_ELEVATOR = "refresh_elevator"
+# Compatibility alias: one refresh only, never periodic polling.
 SERVICE_FAST_POLL = "fast_poll"
 
 # 방문자 메타데이터 조회는 USB ADB의 디렉터리 목록만 읽고, 새 파일이 생긴

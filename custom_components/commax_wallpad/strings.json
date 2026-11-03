@@ -23,36 +23,75 @@
   },
   "entity": {
     "button": {
-      "call_elevator": { "name": "Call elevator" }
+      "call_elevator": {
+        "name": "Call elevator"
+      },
+      "refresh_elevator": {
+        "name": "Refresh elevator status"
+      }
     },
     "sensor": {
-      "floor": { "name": "Floor" },
-      "direction": { "name": "Direction" },
-      "status": { "name": "Elevator status" },
-      "realtime_electric_power": { "name": "Real-time electric power" },
-      "realtime_gas_flow": { "name": "Real-time gas flow" },
-      "realtime_water_flow": { "name": "Real-time water flow" },
-      "estimated_gas_consumption": { "name": "Estimated gas consumption" },
-      "estimated_water_consumption": { "name": "Estimated water consumption" },
-      "last_visitor": { "name": "Last visitor" },
-      "visitor_archive": { "name": "Visitor archive" }
+      "floor": {
+        "name": "Floor"
+      },
+      "direction": {
+        "name": "Direction"
+      },
+      "status": {
+        "name": "Elevator status"
+      },
+      "realtime_electric_power": {
+        "name": "Real-time electric power"
+      },
+      "realtime_gas_flow": {
+        "name": "Real-time gas flow"
+      },
+      "realtime_water_flow": {
+        "name": "Real-time water flow"
+      },
+      "estimated_gas_consumption": {
+        "name": "Estimated gas consumption"
+      },
+      "estimated_water_consumption": {
+        "name": "Estimated water consumption"
+      },
+      "last_visitor": {
+        "name": "Last visitor"
+      },
+      "visitor_archive": {
+        "name": "Visitor archive"
+      }
     },
     "image": {
-      "latest_visitor": { "name": "Latest visitor image" }
+      "latest_visitor": {
+        "name": "Latest visitor image"
+      }
     },
     "binary_sensor": {
-      "visitor_call_active": { "name": "Visitor call active" },
-      "metering_stream": { "name": "Metering connection" }
+      "visitor_call_active": {
+        "name": "Visitor call active"
+      },
+      "metering_stream": {
+        "name": "Metering connection"
+      }
     },
     "event": {
-      "visitor": { "name": "Visitor" },
-      "visitor_call": { "name": "Visitor call" }
+      "visitor": {
+        "name": "Visitor"
+      },
+      "visitor_call": {
+        "name": "Visitor call"
+      }
     }
   },
   "services": {
     "fast_poll": {
-      "name": "Fast-poll elevator",
-      "description": "Temporarily switch the elevator floor/direction sensors to 1-second polling (normally 30s). Use it manually only when the wallpad is not also tracking the elevator. It reverts once idle for a few seconds, or after 2 minutes regardless."
+      "name": "Refresh elevator once (legacy alias)",
+      "description": "Compatibility alias for refresh_elevator. Reads once; never starts fast polling."
+    },
+    "refresh_elevator": {
+      "name": "Refresh elevator status",
+      "description": "Read elevator status, direction and floor once. Does not enable polling."
     }
   }
 }
