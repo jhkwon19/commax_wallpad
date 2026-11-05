@@ -21,6 +21,22 @@ def _coordinator(hass: HomeAssistant, entry_id: str) -> VisitorCoordinator | Non
     return entry_data.get("visitor") if isinstance(entry_data, dict) else None
 
 
+class CallDiagnosticsView(HomeAssistantView):
+    """Bounded replay for a collector reconnect, using HA authentication."""
+
+    url = "/api/commax_wallpad/diagnostics"
+    name = "api:commax_wallpad:diagnostics"
+    requires_auth = True
+
+    async def get(self, request: web.Request) -> web.Response:
+        hass: HomeAssistant = request.app[KEY_HASS]
+        journals = [data["diagnostics"].snapshot() for data in hass.data.get(DOMAIN, {}).values()
+                    if isinstance(data, dict) and "diagnostics" in data]
+        response = self.json({"schema": 1, "journals": journals})
+        response.headers["Cache-Control"] = "private, no-store"
+        return response
+
+
 class VisitorArchiveListView(HomeAssistantView):
     """페이지 단위 방문자 목록. HomeAssistantView 기본 인증을 강제한다."""
 
@@ -109,6 +125,7 @@ async def async_register_visitor_http(hass: HomeAssistant) -> None:
     source_path = Path(__file__).parent / "frontend" / "visitor-card.js"
     source = await hass.async_add_executor_job(source_path.read_text, "utf-8")
     hass.http.register_view(VisitorArchiveListView)
+    hass.http.register_view(CallDiagnosticsView)
     hass.http.register_view(VisitorArchiveImageView)
     hass.http.register_view(VisitorCardJavaScriptView(source))
     hass.data[DATA_HTTP_REGISTERED] = True

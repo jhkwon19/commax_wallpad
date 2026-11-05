@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import re
@@ -15,6 +16,7 @@ from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, Upda
 from homeassistant.util import dt as dt_util
 
 from .client import CommaxRouterClient
+from .call_diagnostics import DiagnosticJournal, PhotoObservation, file_id
 from .const import (
     VISITOR_ARCHIVE_BATCH_SIZE,
     VISITOR_CALL_FAST_POLL_DURATION_SECONDS,
@@ -95,6 +97,7 @@ class VisitorCoordinator(DataUpdateCoordinator[dict]):
         hass: HomeAssistant,
         client: CommaxRouterClient,
         entry_id: str,
+        diagnostics: DiagnosticJournal | None = None,
     ) -> None:
         super().__init__(
             hass,
@@ -104,6 +107,9 @@ class VisitorCoordinator(DataUpdateCoordinator[dict]):
         )
         self._client = client
         self.entry_id = entry_id
+        self.diagnostics = diagnostics
+        self._observation: PhotoObservation | None = None
+        self._observation_timer: asyncio.TimerHandle | None = None
         self.archive_dir = Path(
             hass.config.path("commax_wallpad", "visitor", entry_id)
         )
@@ -120,7 +126,9 @@ class VisitorCoordinator(DataUpdateCoordinator[dict]):
             "baseline": None,
         }
 
-    async def async_start_call_fast_poll(self) -> None:
+    async def async_start_call_fast_poll(
+        self, *, started_epoch: float | None = None, place: str = "", display_name: str = ""
+    ) -> None:
         """실제 벨 호출 뒤 새 JPEG가 생길 때까지만 1초 폴링한다."""
         self._fast_poll_until = (
             time.monotonic() + VISITOR_CALL_FAST_POLL_DURATION_SECONDS
@@ -128,10 +136,39 @@ class VisitorCoordinator(DataUpdateCoordinator[dict]):
         self._fast_poll_baseline = (
             self.data.get("filename") if self.data is not None else None
         )
+        self.stop_observation("superseded")
+        if self.diagnostics:
+            self._observation = PhotoObservation(
+                self.diagnostics, started_epoch=started_epoch or time.time(),
+                place=place, display_name=display_name, baseline=self._fast_poll_baseline,
+            )
+            self._observation_timer = asyncio.get_running_loop().call_later(
+                VISITOR_CALL_FAST_POLL_DURATION_SECONDS, self._observation_deadline
+            )
         self.update_interval = timedelta(
             seconds=VISITOR_CALL_FAST_SCAN_INTERVAL_SECONDS
         )
         await self.async_request_refresh()
+
+    def stop_observation(self, reason: str = "integration_unloaded") -> None:
+        if self._observation_timer:
+            self._observation_timer.cancel()
+            self._observation_timer = None
+        if self._observation:
+            self._observation.finish(reason)
+
+    def _observation_deadline(self) -> None:
+        self.stop_observation("deadline")
+        self._stop_call_fast_poll()
+
+    def _diagnostic(self, kind: str, **fields) -> None:
+        if self.diagnostics:
+            fields.setdefault("call_id", self._observation.call_id if self._observation else None)
+            self.diagnostics.emit(kind, **fields)
+
+    def _diagnostic_error(self, stage: str, exc: Exception, filename: str | None = None) -> None:
+        self._diagnostic("photo_stage_error", stage=stage, error_type=type(exc).__name__,
+                         exit_status=getattr(exc, "exit_status", None), file_id=file_id(filename))
 
     def _call_fast_poll_active(self) -> bool:
         return (
@@ -276,7 +313,11 @@ class VisitorCoordinator(DataUpdateCoordinator[dict]):
         }
 
     async def _async_archive_status(self) -> dict:
-        local = await self.hass.async_add_executor_job(self._local_archive_names)
+        try:
+            local = await self.hass.async_add_executor_job(self._local_archive_names)
+        except Exception as exc:
+            self._diagnostic_error("archive_local_index", exc)
+            raise
         return {
             "archive_count": len(local),
             "archive_pending": None,
@@ -287,7 +328,11 @@ class VisitorCoordinator(DataUpdateCoordinator[dict]):
         }
 
     async def _async_sync_archive(self) -> dict:
-        listing = await self._client.exec(_LIST_HELPER, timeout=15)
+        try:
+            listing = await self._client.exec(_LIST_HELPER, timeout=15)
+        except Exception as exc:
+            self._diagnostic_error("archive_list", exc)
+            raise
         remote: set[str] = set()
         for line in listing.splitlines():
             filename = line.strip()
@@ -311,8 +356,10 @@ class VisitorCoordinator(DataUpdateCoordinator[dict]):
         )
         copied: list[dict[str, str]] = []
         for filename in missing[:VISITOR_ARCHIVE_BATCH_SIZE]:
+            stage = "archive_transfer"
             try:
                 image = await self._async_fetch_image(filename)
+                stage = "archive_save"
                 await self.hass.async_add_executor_job(
                     self._write_archive_image, filename, image
                 )
@@ -320,7 +367,10 @@ class VisitorCoordinator(DataUpdateCoordinator[dict]):
                 if self._archive_state["initial_complete"] or filename not in baseline:
                     copied.append(metadata)
                 local.add(filename)
+                self._diagnostic("photo_stage_ok", stage="archive_save",
+                                 file_id=file_id(filename), bytes=len(image))
             except Exception as err:  # noqa: BLE001 - 다른 사진은 계속 처리한다
+                self._diagnostic_error(stage, err, filename)
                 _LOGGER.warning("Visitor archive copy failed for %s: %s", filename, err)
 
         pending = len(remote - local)
@@ -343,9 +393,19 @@ class VisitorCoordinator(DataUpdateCoordinator[dict]):
         fast_polling = self._call_fast_poll_active()
         if self._fast_poll_until is not None and not fast_polling:
             self._stop_call_fast_poll()
+        stage = "metadata_query"
+        filename = None
+        if self._observation:
+            self._observation.begin_check()
         try:
             metadata = _parse_metadata(await self._client.exec(_QUERY_HELPER, timeout=10))
             filename = metadata["filename"]
+            captured_datetime = _parse_captured_at(metadata["captured_at"], self.hass)
+            if self._observation and self._observation.observe(metadata, captured_datetime.timestamp()):
+                if self._observation_timer:
+                    self._observation_timer.cancel()
+                    self._observation_timer = None
+                self._stop_call_fast_poll()
             filename_changed = (
                 self.data is None or self.data.get("filename") != filename
             )
@@ -356,8 +416,11 @@ class VisitorCoordinator(DataUpdateCoordinator[dict]):
                     "last_checked_at": dt_util.utcnow(),
                 }
             else:
+                self._diagnostic("photo_stage_ok", stage="metadata_query", file_id=file_id(filename),
+                                 captured_at=metadata["captured_at"])
+                stage = "latest_transfer"
                 image = await self._async_fetch_image(filename)
-                captured_datetime = _parse_captured_at(metadata["captured_at"], self.hass)
+                self._diagnostic("photo_stage_ok", stage=stage, file_id=file_id(filename), bytes=len(image))
                 latest = {
                     **metadata,
                     "captured_datetime": captured_datetime,
@@ -366,6 +429,9 @@ class VisitorCoordinator(DataUpdateCoordinator[dict]):
                     "last_checked_at": dt_util.utcnow(),
                 }
         except Exception as err:  # noqa: BLE001
+            self._diagnostic_error(stage, err, filename)
+            if self._observation:
+                self._observation.error(stage, err)
             raise UpdateFailed(
                 "Visitor update failed; check USB ADB and visitor helpers: " f"{err}"
             ) from err
@@ -387,6 +453,7 @@ class VisitorCoordinator(DataUpdateCoordinator[dict]):
             try:
                 archive = await self._async_sync_archive()
             except Exception as err:  # noqa: BLE001 - 최신 사진은 유지한다
+                self._diagnostic_error("archive_sync", err)
                 _LOGGER.warning("Visitor archive sync failed: %s", err)
                 archive = await self._async_archive_status()
                 archive["archive_error"] = str(err)

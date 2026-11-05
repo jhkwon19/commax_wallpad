@@ -20,6 +20,7 @@ from homeassistant.core import HomeAssistant, ServiceCall
 from homeassistant.helpers import device_registry as dr
 
 from .client import CommaxRouterClient
+from .call_diagnostics import DiagnosticJournal
 from .const import CONF_ELEVATOR_INDEX, DOMAIN, SERVICE_FAST_POLL, SERVICE_REFRESH_ELEVATOR
 from .coordinator import ElevatorCoordinator
 from .coordinator_visitor import VisitorCoordinator
@@ -90,7 +91,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         username=entry.data[CONF_USERNAME],
         password=entry.data[CONF_PASSWORD],
     )
-    visitor_coordinator = VisitorCoordinator(hass, visitor_client, entry.entry_id)
+    diagnostics = DiagnosticJournal(hass, entry.entry_id)
+    await diagnostics.async_start()
+    visitor_coordinator = VisitorCoordinator(hass, visitor_client, entry.entry_id, diagnostics)
     await visitor_coordinator.async_refresh()
 
     # logcat은 장기 실행 스트림이므로 사진 조회와 SSH 연결을 공유하지 않는다.
@@ -115,6 +118,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         "visitor": visitor_coordinator,
         "visitor_call_client": visitor_call_client,
         "visitor_call": visitor_call_coordinator,
+        "diagnostics": diagnostics,
     }
 
     # 사진은 /local 공개 경로가 아니라 인증이 강제되는 API로만 제공한다.
@@ -144,6 +148,8 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         # 마지막 설정 항목이 내려갈 때만 공유 서비스를 제거한다.
         data = hass.data[DOMAIN].pop(entry.entry_id)
         await data["visitor_call"].async_stop()
+        data["visitor"].stop_observation()
+        await data["diagnostics"].async_close()
         await data["client"].close()
         await data["visitor_client"].close()
         if not hass.data[DOMAIN]:

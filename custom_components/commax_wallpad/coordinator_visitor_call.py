@@ -114,6 +114,10 @@ class VisitorCallCoordinator(DataUpdateCoordinator[dict]):
                 if self._stopping:
                     return
                 self._reconnect_count += 1
+                self._visitor_coordinator._diagnostic(
+                    "monitor_disconnected", stage="ssh_adb_stream", error_type=type(err).__name__,
+                    reconnect_count=self._reconnect_count, connected=False,
+                )
                 self._set_connection_state(False, str(err))
                 delay = _RECONNECT_DELAYS[
                     min(self._reconnect_attempt, len(_RECONNECT_DELAYS) - 1)
@@ -143,6 +147,8 @@ class VisitorCallCoordinator(DataUpdateCoordinator[dict]):
         if len(parts) == 3 and parts[0] == "ready":
             self._reconnect_attempt = 0
             self._set_connection_state(True, None)
+            self._visitor_coordinator._diagnostic("monitor_connected", connected=True,
+                                                  reconnect_count=self._reconnect_count)
             return
         if len(parts) == 4 and parts[0] == "metering":
             await self._async_handle_metering(parts[2], parts[3])
@@ -187,7 +193,9 @@ class VisitorCallCoordinator(DataUpdateCoordinator[dict]):
             )
             self.async_set_updated_data(updated)
             # 평소 10초 폴링은 유지하고 실제 호출 뒤 잠깐만 1초로 좁힌다.
-            await self._visitor_coordinator.async_start_call_fast_poll()
+            await self._visitor_coordinator.async_start_call_fast_poll(
+                started_epoch=event_time.timestamp(), place=place, display_name=display_name
+            )
             return
 
         started_at = self.data.get("started_at")
@@ -205,6 +213,9 @@ class VisitorCallCoordinator(DataUpdateCoordinator[dict]):
             }
         )
         self.async_set_updated_data(updated)
+        self._visitor_coordinator._diagnostic(
+            "call_ended", place=place, display_name=display_name, source_epoch=event_time.timestamp()
+        )
 
     async def _async_handle_metering(self, raw_epoch: str, payload: str) -> None:
         """검증된 smartMetering report 하나를 상태에 반영한다."""

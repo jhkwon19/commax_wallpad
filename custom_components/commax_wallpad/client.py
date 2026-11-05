@@ -38,6 +38,14 @@ with warnings.catch_warnings():
 _LOGGER = logging.getLogger(__name__)
 
 
+class RemoteCommandError(RuntimeError):
+    """A completed helper failure; distinguish it from transport/reconnect errors."""
+
+    def __init__(self, exit_status: int | None, detail: str = "") -> None:
+        self.exit_status = exit_status
+        super().__init__(f"remote helper exited {exit_status}: {detail[:300]}")
+
+
 class CommaxRouterClient:
     """공유 SSH 연결로 OpenWrt 라우터에서 셸 명령을 실행한다."""
 
@@ -87,9 +95,10 @@ class CommaxRouterClient:
                     if self._conn is None:
                         self._conn = await self._open_connection()
                     async with self._conn.create_process(command) as process:
-                        return await asyncio.wait_for(
-                            process.stdout.read(), timeout=timeout
-                        )
+                        stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=timeout)
+                        if process.exit_status != 0:
+                            raise RemoteCommandError(process.exit_status, stderr)
+                        return stdout
                 except (OSError, asyncssh.Error, asyncio.TimeoutError) as err:
                     last_err = err
                     if self._conn is not None:
@@ -117,9 +126,7 @@ class CommaxRouterClient:
                     )
                     if process.exit_status != 0:
                         detail = stderr.decode("utf-8", errors="replace")[:300]
-                        raise RuntimeError(
-                            f"remote command exited {process.exit_status}: {detail}"
-                        )
+                        raise RemoteCommandError(process.exit_status, detail)
                     return stdout
                 except RuntimeError:
                     # 원격 도우미 자체의 확정적 실패는 같은 명령을 즉시 반복하지 않는다.
