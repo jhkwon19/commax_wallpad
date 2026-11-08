@@ -40,21 +40,6 @@
       "status": {
         "name": "엘리베이터 상태"
       },
-      "realtime_electric_power": {
-        "name": "실시간 전력"
-      },
-      "realtime_gas_flow": {
-        "name": "실시간 가스 유량"
-      },
-      "realtime_water_flow": {
-        "name": "실시간 수도 유량"
-      },
-      "estimated_gas_consumption": {
-        "name": "추정 가스 사용량"
-      },
-      "estimated_water_consumption": {
-        "name": "추정 수도 사용량"
-      },
       "last_visitor": {
         "name": "마지막 방문자"
       },
@@ -70,9 +55,6 @@
     "binary_sensor": {
       "visitor_call_active": {
         "name": "실시간 방문자 호출"
-      },
-      "metering_stream": {
-        "name": "검침 연결 상태"
       }
     },
     "event": {

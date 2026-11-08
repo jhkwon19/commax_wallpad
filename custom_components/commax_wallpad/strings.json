@@ -40,21 +40,6 @@
       "status": {
         "name": "Elevator status"
       },
-      "realtime_electric_power": {
-        "name": "Real-time electric power"
-      },
-      "realtime_gas_flow": {
-        "name": "Real-time gas flow"
-      },
-      "realtime_water_flow": {
-        "name": "Real-time water flow"
-      },
-      "estimated_gas_consumption": {
-        "name": "Estimated gas consumption"
-      },
-      "estimated_water_consumption": {
-        "name": "Estimated water consumption"
-      },
       "last_visitor": {
         "name": "Last visitor"
       },
@@ -70,9 +55,6 @@
     "binary_sensor": {
       "visitor_call_active": {
         "name": "Visitor call active"
-      },
-      "metering_stream": {
-        "name": "Metering connection"
       }
     },
     "event": {

@@ -1,9 +1,8 @@
-"""ADB logcat 스트림에서 현관 호출과 PAM 실시간 검침을 감지한다."""
+"""ADB logcat 스트림에서 현관 호출 시작·종료를 감지한다."""
 
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
 from datetime import UTC, datetime
 
@@ -28,7 +27,6 @@ _LOBBY_LOCATION_BY_DISPLAY_NAME = {
     "lobby0106": "공동현관(지하1층)",
     "lobby0107": "공동현관(지하2층)",
 }
-_METER_SORTS = {"electricMeter", "gasMeter", "waterMeter"}
 
 
 class VisitorCallCoordinator(DataUpdateCoordinator[dict]):
@@ -62,7 +60,6 @@ class VisitorCallCoordinator(DataUpdateCoordinator[dict]):
             "last_connected_at": None,
             "last_stream_event_at": None,
             "reconnect_count": 0,
-            "meters": {},
             "error": None,
         }
 
@@ -150,9 +147,6 @@ class VisitorCallCoordinator(DataUpdateCoordinator[dict]):
             self._visitor_coordinator._diagnostic("monitor_connected", connected=True,
                                                   reconnect_count=self._reconnect_count)
             return
-        if len(parts) == 4 and parts[0] == "metering":
-            await self._async_handle_metering(parts[2], parts[3])
-            return
         if len(parts) not in (3, 4) or parts[0] not in {"ringing", "ended"}:
             if line:
                 _LOGGER.debug("Ignoring visitor call monitor output: %s", line[:200])
@@ -216,61 +210,3 @@ class VisitorCallCoordinator(DataUpdateCoordinator[dict]):
         self._visitor_coordinator._diagnostic(
             "call_ended", place=place, display_name=display_name, source_epoch=event_time.timestamp()
         )
-
-    async def _async_handle_metering(self, raw_epoch: str, payload: str) -> None:
-        """검증된 smartMetering report 하나를 상태에 반영한다."""
-        try:
-            event_time = datetime.fromtimestamp(int(raw_epoch), tz=UTC)
-            message = json.loads(payload)
-        except (ValueError, OSError, json.JSONDecodeError):
-            _LOGGER.debug("Ignoring invalid PAM metering output: %s", payload[:200])
-            return
-
-        if not isinstance(message, dict):
-            return
-        obj = message.get("object")
-        if (
-            message.get("command") != "report"
-            or not isinstance(obj, dict)
-            or obj.get("commaxDevice") != "smartMetering"
-        ):
-            return
-
-        reports = obj.get("subDevice")
-        if not isinstance(reports, list):
-            return
-
-        meters = dict(self.data.get("meters", {}))
-        changed = False
-        for report in reports:
-            if not isinstance(report, dict) or report.get("sort") not in _METER_SORTS:
-                continue
-            try:
-                raw_value = int(report["value"])
-                precision = int(report["precision"])
-                if precision < 0 or precision > 9:
-                    raise ValueError("precision out of range")
-            except (KeyError, TypeError, ValueError):
-                _LOGGER.debug("Ignoring invalid PAM meter report: %s", report)
-                continue
-            meter_sort = report["sort"]
-            meters[meter_sort] = {
-                "value": raw_value / (10**precision),
-                "raw_value": raw_value,
-                "precision": precision,
-                "scale": report.get("scale"),
-                "last_reported_at": event_time,
-            }
-            changed = True
-
-        if changed:
-            self._reconnect_attempt = 0
-            self.async_set_updated_data(
-                {
-                    **self.data,
-                    "meters": meters,
-                    "connected": True,
-                    "last_stream_event_at": event_time,
-                    "error": None,
-                }
-            )

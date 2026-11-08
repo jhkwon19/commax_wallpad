@@ -18,6 +18,7 @@ from homeassistant.const import (
 )
 from homeassistant.core import HomeAssistant, ServiceCall
 from homeassistant.helpers import device_registry as dr
+from homeassistant.helpers import entity_registry as er
 
 from .client import CommaxRouterClient
 from .call_diagnostics import DiagnosticJournal
@@ -43,10 +44,23 @@ PLATFORMS: list[Platform] = [
 # 아래 있었는데, 그 엔티티들은 제거됐지만 빈 기기 껍데기는 레지스트리에 남아
 # HA UI에서 수동으로 지워야 했다. 아래 목록에 없는 기기는 지금 코드 어디서도
 # 다시 만들지 않으므로, 매 시작마다 안전하게 정리한다.
-_CURRENT_DEVICE_SUFFIXES = ("elevator", "visitor", "realtime-metering")
+_CURRENT_DEVICE_SUFFIXES = ("elevator", "visitor")
+# 0.11.0 이전 검침 엔티티만 제거한다. Recorder 통계·다른 통합은 건드리지 않는다.
+_REMOVED_METER_SUFFIXES = (
+    "realtime_electric_power", "realtime_gas_flow", "realtime_water_flow",
+    "estimated_gas_consumption", "estimated_water_consumption", "metering_stream",
+)
 
 
 def _async_prune_stale_devices(hass: HomeAssistant, entry: ConfigEntry) -> None:
+    entity_registry = er.async_get(hass)
+    removed_unique_ids = {
+        f"{entry.entry_id}_{suffix}" for suffix in _REMOVED_METER_SUFFIXES
+    }
+    for entity in er.async_entries_for_config_entry(entity_registry, entry.entry_id):
+        if entity.platform == DOMAIN and entity.unique_id in removed_unique_ids:
+            entity_registry.async_remove(entity.entity_id)
+
     registry = dr.async_get(hass)
     current_identifiers = {
         (DOMAIN, f"{entry.entry_id}-{suffix}") for suffix in _CURRENT_DEVICE_SUFFIXES

@@ -2,24 +2,10 @@
 
 from __future__ import annotations
 
-from datetime import datetime
-
-from homeassistant.components.sensor import (
-    RestoreSensor,
-    SensorDeviceClass,
-    SensorEntity,
-    SensorStateClass,
-)
+from homeassistant.components.sensor import SensorDeviceClass, SensorEntity
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.const import (
-    CONF_HOST,
-    STATE_UNAVAILABLE,
-    STATE_UNKNOWN,
-    UnitOfPower,
-    UnitOfVolume,
-    UnitOfVolumeFlowRate,
-)
-from homeassistant.core import HomeAssistant, callback
+from homeassistant.const import CONF_HOST
+from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
@@ -27,7 +13,6 @@ from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from .const import DOMAIN, EV_STATUS_MAP, EV_STATUS_UNKNOWN
 from .coordinator import ElevatorCoordinator
 from .coordinator_visitor import VisitorCoordinator
-from .coordinator_visitor_call import VisitorCallCoordinator
 
 
 async def async_setup_entry(
@@ -35,22 +20,15 @@ async def async_setup_entry(
     entry: ConfigEntry,
     async_add_entities: AddEntitiesCallback,
 ) -> None:
-    # 하나의 엘리베이터 coordinator는 층/방향 센서가 공유하고, 장기 logcat
-    # 스트림 하나가 방문자 호출과 실시간 검침을 함께 전달한다.
+    # 엘리베이터 센서와 방문자 사진 센서는 각각 기존 coordinator를 공유한다.
     data = hass.data[DOMAIN][entry.entry_id]
     elevator_coordinator: ElevatorCoordinator = data["elevator"]
     visitor_coordinator: VisitorCoordinator = data["visitor"]
-    event_coordinator: VisitorCallCoordinator = data["visitor_call"]
     async_add_entities(
         [
             ElevatorFloorSensor(elevator_coordinator, entry),
             ElevatorDirectionSensor(elevator_coordinator, entry),
             ElevatorStatusSensor(elevator_coordinator, entry),
-            RealtimeElectricPowerSensor(event_coordinator, entry),
-            RealtimeGasFlowSensor(event_coordinator, entry),
-            RealtimeWaterFlowSensor(event_coordinator, entry),
-            EstimatedGasConsumptionSensor(event_coordinator, entry),
-            EstimatedWaterConsumptionSensor(event_coordinator, entry),
             LastVisitorSensor(visitor_coordinator, entry),
             VisitorArchiveSensor(visitor_coordinator, entry),
         ]
@@ -87,54 +65,6 @@ class _ElevatorEntityBase(_CommaxEntityBase):
             "update_mode": "manual",
             "last_refresh_error": self.coordinator.last_refresh_error,
             "last_successful_update": last_success.isoformat() if last_success else None,
-        }
-
-
-class _RealtimeMeterEntityBase(_CommaxEntityBase):
-    """PAM 순간 검침 엔티티를 별도 기기로 묶는 공통 기반."""
-
-    _meter_sort: str
-    _unique_suffix: str
-    _attr_state_class = SensorStateClass.MEASUREMENT
-    _attr_suggested_display_precision = 1
-
-    def __init__(
-        self, coordinator: VisitorCallCoordinator, entry: ConfigEntry
-    ) -> None:
-        super().__init__(coordinator, entry)
-        self._attr_unique_id = f"{entry.entry_id}_{self._unique_suffix}"
-        self._attr_device_info = DeviceInfo(
-            identifiers={(DOMAIN, f"{entry.entry_id}-realtime-metering")},
-            name=f"Commax 실시간 검침 ({entry.data[CONF_HOST]})",
-            manufacturer="Commax",
-            model="CDP-1020MB Smart Metering",
-        )
-
-    @property
-    def _meter_data(self) -> dict | None:
-        data = self.coordinator.data or {}
-        meter = data.get("meters", {}).get(self._meter_sort)
-        return meter if isinstance(meter, dict) else None
-
-    @property
-    def native_value(self) -> float | None:
-        meter = self._meter_data
-        return meter.get("value") if meter is not None else None
-
-    @property
-    def available(self) -> bool:
-        data = self.coordinator.data or {}
-        return bool(data.get("connected"))
-
-    @property
-    def extra_state_attributes(self) -> dict:
-        data = self.coordinator.data or {}
-        meter = self._meter_data or {}
-        return {
-            "raw_value": meter.get("raw_value"),
-            "precision": meter.get("precision"),
-            "last_reported_at": meter.get("last_reported_at"),
-            "stream_connected": bool(data.get("connected")),
         }
 
 
@@ -250,161 +180,6 @@ class ElevatorStatusSensor(_ElevatorEntityBase):
             **super().extra_state_attributes,
             "ev_status_code": self.coordinator.data.get("ev_status"),
         }
-
-
-class RealtimeElectricPowerSensor(_RealtimeMeterEntityBase):
-    """PAM이 보고한 현재 소비 전력."""
-
-    _meter_sort = "electricMeter"
-    _unique_suffix = "realtime_electric_power"
-    _attr_translation_key = "realtime_electric_power"
-    _attr_icon = "mdi:flash"
-    _attr_device_class = SensorDeviceClass.POWER
-    _attr_native_unit_of_measurement = UnitOfPower.WATT
-
-
-class RealtimeGasFlowSensor(_RealtimeMeterEntityBase):
-    """PAM이 보고한 현재 가스 유량."""
-
-    _meter_sort = "gasMeter"
-    _unique_suffix = "realtime_gas_flow"
-    _attr_translation_key = "realtime_gas_flow"
-    _attr_icon = "mdi:fire"
-    _attr_device_class = SensorDeviceClass.VOLUME_FLOW_RATE
-    _attr_native_unit_of_measurement = UnitOfVolumeFlowRate.CUBIC_METERS_PER_HOUR
-
-
-class RealtimeWaterFlowSensor(_RealtimeMeterEntityBase):
-    """PAM이 보고한 현재 수도 유량."""
-
-    _meter_sort = "waterMeter"
-    _unique_suffix = "realtime_water_flow"
-    _attr_translation_key = "realtime_water_flow"
-    _attr_icon = "mdi:water"
-    _attr_device_class = SensorDeviceClass.VOLUME_FLOW_RATE
-    _attr_native_unit_of_measurement = UnitOfVolumeFlowRate.CUBIC_METERS_PER_HOUR
-
-
-class _EstimatedConsumptionSensor(CoordinatorEntity, RestoreSensor):
-    """유량 보고를 왼쪽 직사각형 방식으로 적산한 복원 가능한 추정치."""
-
-    _attr_has_entity_name = True
-    _attr_state_class = SensorStateClass.TOTAL_INCREASING
-    _attr_native_unit_of_measurement = UnitOfVolume.CUBIC_METERS
-    _attr_suggested_display_precision = 4
-    _meter_sort: str
-    _unique_suffix: str
-
-    def __init__(
-        self, coordinator: VisitorCallCoordinator, entry: ConfigEntry
-    ) -> None:
-        super().__init__(coordinator)
-        self._attr_unique_id = f"{entry.entry_id}_{self._unique_suffix}"
-        self._attr_native_value = 0.0
-        self._last_seen_report_at: datetime | None = None
-        self._integration_report_at: datetime | None = None
-        self._integration_flow: float | None = None
-        self._attr_device_info = DeviceInfo(
-            identifiers={(DOMAIN, f"{entry.entry_id}-realtime-metering")},
-            name=f"Commax 실시간 검침 ({entry.data[CONF_HOST]})",
-            manufacturer="Commax",
-            model="CDP-1020MB Smart Metering",
-        )
-
-    async def async_added_to_hass(self) -> None:
-        """누적값만 복원하고 중단 시간은 사용량으로 적산하지 않는다."""
-        await super().async_added_to_hass()
-        last_state = await self.async_get_last_state()
-        if last_state and last_state.state not in {STATE_UNKNOWN, STATE_UNAVAILABLE}:
-            try:
-                restored = float(last_state.state)
-            except (TypeError, ValueError):
-                restored = 0.0
-            if restored >= 0:
-                self._attr_native_value = restored
-
-    @property
-    def available(self) -> bool:
-        return bool(self.coordinator.data and self.coordinator.data.get("connected"))
-
-    @property
-    def extra_state_attributes(self) -> dict:
-        return {
-            "estimated": True,
-            "source_meter": self._meter_sort,
-            "source_flow": self._integration_flow,
-            "last_integrated_at": self._integration_report_at,
-            "stream_connected": bool(
-                self.coordinator.data and self.coordinator.data.get("connected")
-            ),
-        }
-
-    @callback
-    def _handle_coordinator_update(self) -> None:
-        data = self.coordinator.data or {}
-        if not data.get("connected"):
-            # 다음 연결의 첫 보고는 새 기준점으로만 사용한다. 연결이 끊긴 동안
-            # 마지막 유량이 계속됐다고 가정하면 허위 사용량이 생길 수 있다.
-            self._integration_report_at = None
-            self._integration_flow = None
-            super()._handle_coordinator_update()
-            return
-
-        meter = data.get("meters", {}).get(self._meter_sort)
-        if not isinstance(meter, dict):
-            super()._handle_coordinator_update()
-            return
-        report_at = meter.get("last_reported_at")
-        flow = meter.get("value")
-        if (
-            not isinstance(report_at, datetime)
-            or not isinstance(flow, int | float)
-            or (
-                self._last_seen_report_at is not None
-                and report_at <= self._last_seen_report_at
-            )
-        ):
-            super()._handle_coordinator_update()
-            return
-
-        if (
-            self._integration_report_at is not None
-            and self._integration_flow is not None
-            and report_at > self._integration_report_at
-        ):
-            elapsed_hours = (
-                report_at - self._integration_report_at
-            ).total_seconds() / 3600
-            self._attr_native_value = round(
-                float(self._attr_native_value or 0)
-                + self._integration_flow * elapsed_hours,
-                6,
-            )
-
-        self._last_seen_report_at = report_at
-        self._integration_report_at = report_at
-        self._integration_flow = float(flow)
-        super()._handle_coordinator_update()
-
-
-class EstimatedGasConsumptionSensor(_EstimatedConsumptionSensor):
-    """에너지 대시보드용 추정 누적 가스 사용량."""
-
-    _meter_sort = "gasMeter"
-    _unique_suffix = "estimated_gas_consumption"
-    _attr_translation_key = "estimated_gas_consumption"
-    _attr_icon = "mdi:meter-gas"
-    _attr_device_class = SensorDeviceClass.GAS
-
-
-class EstimatedWaterConsumptionSensor(_EstimatedConsumptionSensor):
-    """에너지 대시보드용 추정 누적 수도 사용량."""
-
-    _meter_sort = "waterMeter"
-    _unique_suffix = "estimated_water_consumption"
-    _attr_translation_key = "estimated_water_consumption"
-    _attr_icon = "mdi:water-circle"
-    _attr_device_class = SensorDeviceClass.WATER
 
 
 class LastVisitorSensor(_VisitorEntityBase):

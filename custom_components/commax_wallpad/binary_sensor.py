@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from homeassistant.components.binary_sensor import (
-    BinarySensorDeviceClass,
     BinarySensorEntity,
 )
 from homeassistant.config_entries import ConfigEntry
@@ -28,7 +27,6 @@ async def async_setup_entry(
     async_add_entities(
         [
             VisitorCallActiveBinarySensor(coordinator, entry),
-            MeteringStreamBinarySensor(coordinator, entry),
         ]
     )
 
@@ -74,38 +72,4 @@ class VisitorCallActiveBinarySensor(CoordinatorEntity, BinarySensorEntity):
             "last_duration_seconds": data.get("last_duration_seconds"),
             "monitor_connected": data.get("connected"),
             "monitor_error": data.get("error"),
-        }
-
-
-class MeteringStreamBinarySensor(CoordinatorEntity, BinarySensorEntity):
-    """실시간 검침을 전달하는 SSH/ADB logcat 스트림 연결 상태."""
-
-    _attr_has_entity_name = True
-    _attr_translation_key = "metering_stream"
-    _attr_device_class = BinarySensorDeviceClass.CONNECTIVITY
-
-    def __init__(
-        self, coordinator: VisitorCallCoordinator, entry: ConfigEntry
-    ) -> None:
-        super().__init__(coordinator)
-        self._attr_unique_id = f"{entry.entry_id}_metering_stream"
-        self._attr_device_info = DeviceInfo(
-            identifiers={(DOMAIN, f"{entry.entry_id}-realtime-metering")},
-            name=f"Commax 실시간 검침 ({entry.data[CONF_HOST]})",
-            manufacturer="Commax",
-            model="CDP-1020MB Smart Metering",
-        )
-
-    @property
-    def is_on(self) -> bool:
-        return bool(self.coordinator.data and self.coordinator.data.get("connected"))
-
-    @property
-    def extra_state_attributes(self) -> dict:
-        data = self.coordinator.data or {}
-        return {
-            "last_event_at": data.get("last_stream_event_at"),
-            "last_connected_at": data.get("last_connected_at"),
-            "reconnect_count": data.get("reconnect_count", 0),
-            "error": data.get("error"),
         }
