@@ -8,6 +8,7 @@ import logging
 import re
 import shlex
 import time
+from collections import deque
 from datetime import datetime, timedelta
 from pathlib import Path
 
@@ -37,6 +38,24 @@ _FILENAME_RE = re.compile(
 _JPEG_SOI = b"\xff\xd8\xff"
 _JPEG_EOI = b"\xff\xd9"
 _STATE_FILE = ".archive_state.json"
+_GATE_FILE = ".gate_locations.json"
+_LOBBY = "공동현관"
+# 사진 파일명 flags는 세대현관/공동현관만 구분한다. 공동현관 세 곳은 SIP
+# DisplayName으로만 구분되므로(lobby0105/0106/0107 실측, 2026-08-26) 호출
+# 시각과 사진 촬영 시각을 짝지어 파일명별 세부 위치를 따로 보관한다.
+LOBBY_LOCATION_BY_DISPLAY_NAME = {
+    "lobby0105": "공동현관(1층)",
+    "lobby0106": "공동현관(지하1층)",
+    "lobby0107": "공동현관(지하2층)",
+}
+# 사진은 호출 직후 찍힌다. 월패드·라우터 시계 차이를 고려해 앞뒤 여유를 둔다.
+_GATE_MATCH_BEFORE_SECONDS = 5
+_GATE_MATCH_AFTER_SECONDS = 60
+
+
+def location_matches(location: str, wanted: str) -> bool:
+    """'공동현관' 필터는 세부 위치가 붙은 공동현관도 포함한다."""
+    return location == wanted or location.startswith(f"{wanted}(")
 
 
 def _metadata_from_filename(filename: str) -> dict[str, str]:
@@ -125,6 +144,8 @@ class VisitorCoordinator(DataUpdateCoordinator[dict]):
             "initial_complete": False,
             "baseline": None,
         }
+        self._gate_locations: dict[str, str] = {}
+        self._recent_gate_calls: deque[tuple[float, str]] = deque(maxlen=20)
 
     async def async_start_call_fast_poll(
         self, *, started_epoch: float | None = None, place: str = "", display_name: str = ""
@@ -136,6 +157,9 @@ class VisitorCoordinator(DataUpdateCoordinator[dict]):
         self._fast_poll_baseline = (
             self.data.get("filename") if self.data is not None else None
         )
+        gate = LOBBY_LOCATION_BY_DISPLAY_NAME.get(display_name)
+        if gate:
+            self._recent_gate_calls.append((started_epoch or time.time(), gate))
         self.stop_observation("superseded")
         if self.diagnostics:
             self._observation = PhotoObservation(
@@ -238,7 +262,99 @@ class VisitorCoordinator(DataUpdateCoordinator[dict]):
                     self._archive_state = loaded
             except (OSError, ValueError):
                 _LOGGER.warning("Visitor archive state is invalid; rebuilding baseline")
+        gate_path = self.archive_dir / _GATE_FILE
+        if gate_path.exists():
+            try:
+                loaded = json.loads(gate_path.read_text(encoding="utf-8"))
+                self._gate_locations = {
+                    name: value
+                    for name, value in loaded.items()
+                    if _FILENAME_RE.fullmatch(name)
+                    and value in LOBBY_LOCATION_BY_DISPLAY_NAME.values()
+                }
+            except (OSError, ValueError, AttributeError):
+                _LOGGER.warning("Visitor gate locations are invalid; rebuilding")
         self._archive_prepared = True
+        try:
+            self._backfill_gate_locations()
+        except OSError as err:
+            _LOGGER.warning("Visitor gate location backfill failed: %s", err)
+
+    def _journal_gate_calls(self) -> list[tuple[float, str]]:
+        """진단 기록에 남은 과거 공동현관 호출의 세부 위치를 읽는다."""
+        base = Path(
+            self.hass.config.path(
+                "commax_wallpad", "diagnostics", self.entry_id, "events.jsonl"
+            )
+        )
+        calls: list[tuple[float, str]] = []
+        for path in (base.with_suffix(".jsonl.1"), base):
+            try:
+                lines = path.read_text(encoding="utf-8").splitlines()
+            except OSError:
+                continue
+            for line in lines:
+                try:
+                    row = json.loads(line)
+                    gate = LOBBY_LOCATION_BY_DISPLAY_NAME.get(row.get("display_name"))
+                    if row.get("kind") == "call_observation_started" and gate:
+                        calls.append((float(row["source_epoch"]), gate))
+                except (ValueError, TypeError, KeyError, AttributeError):
+                    continue
+        return calls
+
+    def _backfill_gate_locations(self) -> None:
+        """기존 아카이브의 공동현관 사진을 진단 기록의 호출 시각과 대조한다."""
+        calls = self._journal_gate_calls()
+        if not calls:
+            return
+        changed = False
+        for path in self.archive_dir.glob("*.jpg"):
+            name = path.name
+            if name in self._gate_locations or not _FILENAME_RE.fullmatch(name):
+                continue
+            gate = self._match_gate(_metadata_from_filename(name), calls)
+            if gate:
+                self._gate_locations[name] = gate
+                changed = True
+        if changed:
+            self._save_gate_locations()
+
+    def _match_gate(self, metadata: dict[str, str], calls) -> str | None:
+        """촬영 시각과 가장 가까운 공동현관 호출의 세부 위치를 고른다."""
+        if metadata.get("location") != _LOBBY:
+            return None
+        captured = _parse_captured_at(metadata["captured_at"], self.hass).timestamp()
+        best: tuple[float, str] | None = None
+        for started, gate in calls:
+            delta = captured - started
+            if -_GATE_MATCH_BEFORE_SECONDS <= delta <= _GATE_MATCH_AFTER_SECONDS and (
+                best is None or abs(delta) < best[0]
+            ):
+                best = (abs(delta), gate)
+        return best[1] if best else None
+
+    def _save_gate_locations(self) -> None:
+        temporary = self.archive_dir / f"{_GATE_FILE}.part"
+        temporary.write_text(
+            json.dumps(self._gate_locations, ensure_ascii=False, sort_keys=True),
+            encoding="utf-8",
+        )
+        temporary.replace(self.archive_dir / _GATE_FILE)
+
+    def _resolve_gate(self, metadata: dict[str, str], calls: list) -> dict[str, str]:
+        """최근 실시간 호출과 맞는 공동현관 사진에 세부 위치를 붙여 저장한다."""
+        self._prepare_archive()
+        filename = metadata["filename"]
+        gate = self._gate_locations.get(filename)
+        if gate is None:
+            gate = self._match_gate(metadata, calls)
+            if gate:
+                self._gate_locations[filename] = gate
+                self._save_gate_locations()
+                self._archive_items_cache = None
+                self._archive_generation += 1
+        return {**metadata, "location": gate} if gate else metadata
 
     def _save_archive_state(self) -> None:
         temporary = self.archive_dir / f"{_STATE_FILE}.part"
@@ -282,8 +398,12 @@ class VisitorCoordinator(DataUpdateCoordinator[dict]):
         """인증 HTTP API에 제공할 페이지 단위 목록을 만든다."""
         names = self._local_archive_names()
         if self._archive_items_cache is None:
+            gates = self._gate_locations
             self._archive_items_cache = sorted(
-                (_metadata_from_filename(name) for name in names),
+                (
+                    {**item, "location": gates.get(item["filename"], item["location"])}
+                    for item in map(_metadata_from_filename, names)
+                ),
                 key=lambda item: item["captured_at"],
                 reverse=True,
             )
@@ -291,7 +411,10 @@ class VisitorCoordinator(DataUpdateCoordinator[dict]):
         if date_filter:
             items = [item for item in items if item["captured_at"][:10] == date_filter]
         if location_filter:
-            items = [item for item in items if item["location"] == location_filter]
+            items = [
+                item for item in items
+                if location_matches(item["location"], location_filter)
+            ]
         total = len(items)
         start = (page - 1) * per_page
         selected = items[start : start + per_page]
@@ -363,7 +486,10 @@ class VisitorCoordinator(DataUpdateCoordinator[dict]):
                 await self.hass.async_add_executor_job(
                     self._write_archive_image, filename, image
                 )
-                metadata = _metadata_from_filename(filename)
+                metadata = await self.hass.async_add_executor_job(
+                    self._resolve_gate, _metadata_from_filename(filename),
+                    list(self._recent_gate_calls),
+                )
                 if self._archive_state["initial_complete"] or filename not in baseline:
                     copied.append(metadata)
                 local.add(filename)
@@ -418,6 +544,10 @@ class VisitorCoordinator(DataUpdateCoordinator[dict]):
             else:
                 self._diagnostic("photo_stage_ok", stage="metadata_query", file_id=file_id(filename),
                                  captured_at=metadata["captured_at"])
+                stage = "gate_location"
+                metadata = await self.hass.async_add_executor_job(
+                    self._resolve_gate, metadata, list(self._recent_gate_calls)
+                )
                 stage = "latest_transfer"
                 image = await self._async_fetch_image(filename)
                 self._diagnostic("photo_stage_ok", stage=stage, file_id=file_id(filename), bytes=len(image))

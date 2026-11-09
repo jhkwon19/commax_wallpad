@@ -10,23 +10,16 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
 
 from .client import CommaxRouterClient
-from .coordinator_visitor import VisitorCoordinator
+from .coordinator_visitor import LOBBY_LOCATION_BY_DISPLAY_NAME, VisitorCoordinator
 
 _LOGGER = logging.getLogger(__name__)
 
 _MONITOR_HELPER = "/root/wallpad-visitor-call-monitor.sh"
 _RECONNECT_DELAYS = (1, 2, 5, 10, 30)
 _LOCATION_BY_PLACE = {"2": "세대현관", "5": "공동현관"}
-# place만으로는 공동현관 여러 개(지하 주차장 출입구 등)를 구분할 수 없다 —
-# 다 같은 place="5"로 찍힌다. SIP DisplayName은 게이트마다 달라서
-# (lobby0105/0106/0107 실측 확인, 2026-08-26) 이걸로 세분화한다. 알려지지
-# 않은 DisplayName은 _LOCATION_BY_PLACE의 일반 "공동현관"으로 자연히
-# 폴백된다.
-_LOBBY_LOCATION_BY_DISPLAY_NAME = {
-    "lobby0105": "공동현관(1층)",
-    "lobby0106": "공동현관(지하1층)",
-    "lobby0107": "공동현관(지하2층)",
-}
+# place만으로는 공동현관 여러 개를 구분할 수 없어 SIP DisplayName으로 세분화한다.
+# 알려지지 않은 DisplayName은 _LOCATION_BY_PLACE의 일반 "공동현관"으로 폴백된다.
+_LOBBY_LOCATION_BY_DISPLAY_NAME = LOBBY_LOCATION_BY_DISPLAY_NAME
 
 
 class VisitorCallCoordinator(DataUpdateCoordinator[dict]):

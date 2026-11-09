@@ -78,7 +78,7 @@ class CommaxVisitorCard extends HTMLElement {
       .badge{right:4px;top:4px;padding:3px 5px;font-size:10px}.badge ha-icon{--mdc-icon-size:12px}}
     </style><div class="wrap"><div class="head"><div><h2>방문자 기록 <span class="count">0</span></h2></div>
       <div class="tools"><input class="date" type="date"><select class="location"><option value="">전체 위치</option>
-      <option value="공동현관">공동현관</option><option value="세대현관">세대현관</option></select><button class="clear">전체 보기</button></div></div>
+      <option value="공동현관">공동현관 전체</option><option value="공동현관(1층)">공동현관(1층)</option><option value="공동현관(지하1층)">공동현관(지하1층)</option><option value="공동현관(지하2층)">공동현관(지하2층)</option><option value="세대현관">세대현관</option></select><button class="clear">전체 보기</button></div></div>
       <p class="status">불러오는 중…</p><div class="grid"></div><button class="more" hidden>더 보기</button></div>
       <div class="viewer"><button class="close">×</button><img><p></p></div></ha-card>`;
     this.querySelector(".date").onchange = (e) => { this.date=e.target.value; this.load(true); };
@@ -112,7 +112,7 @@ class CommaxVisitorCard extends HTMLElement {
     for (const item of this.items.slice(grid.children.length)) {
       const article=document.createElement("article");
       const date=item.captured_at.slice(0,10), time=item.captured_at.slice(11,19);
-      const icon=item.location==="세대현관"?"mdi:home-account":item.location==="공동현관"?"mdi:door-open":"mdi:help-circle";
+      const icon=item.location==="세대현관"?"mdi:home-account":item.location.startsWith("공동현관")?"mdi:door-open":"mdi:help-circle";
       article.innerHTML=`<button class="photo"><img alt="${date} ${time} 방문자 사진"></button><span class="badge"><ha-icon icon="${icon}"></ha-icon>${item.location}</span>
         <div class="meta"><strong>${time}</strong><span>${date}</span></div>`;
       grid.appendChild(article);
