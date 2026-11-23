@@ -21,6 +21,8 @@ ELEVATOR_FAILURES_BEFORE_UNAVAILABLE = 3
 SERVICE_REFRESH_ELEVATOR = "refresh_elevator"
 # Compatibility alias: one refresh only, never periodic polling.
 SERVICE_FAST_POLL = "fast_poll"
+# 검침을 30분 정기 조회 사이에 한 번 더 읽는다. 정기 일정은 바꾸지 않는다.
+SERVICE_REFRESH_METER = "refresh_meter"
 
 # 방문자 메타데이터 조회는 USB ADB의 디렉터리 목록만 읽고, 새 파일이 생긴
 # 경우에만 JPEG를 전송한다. 공동현관 처리 자체를 방해하지 않으면서 체감상

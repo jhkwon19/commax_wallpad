@@ -28,6 +28,9 @@
       },
       "refresh_elevator": {
         "name": "Refresh elevator status"
+      },
+      "refresh_meter": {
+        "name": "Refresh meter readings"
       }
     },
     "sensor": {
@@ -45,6 +48,15 @@
       },
       "visitor_archive": {
         "name": "Visitor archive"
+      },
+      "gas_meter_reading": {
+        "name": "Gas meter reading"
+      },
+      "water_meter_reading": {
+        "name": "Water meter reading"
+      },
+      "electricity_meter_reading": {
+        "name": "Electricity meter reading"
       }
     },
     "image": {
@@ -74,6 +86,10 @@
     "refresh_elevator": {
       "name": "Refresh elevator status",
       "description": "Read elevator status, direction and floor once. Does not enable polling."
+    },
+    "refresh_meter": {
+      "name": "Refresh meter readings",
+      "description": "Read the gas, water and electricity meter totals once now. The 30-minute schedule is unchanged."
     }
   }
 }

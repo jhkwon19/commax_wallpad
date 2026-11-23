@@ -6,3 +6,7 @@ fast_poll:
   name: Refresh elevator once (legacy alias)
   description: Compatibility alias for refresh_elevator. Reads once; never starts fast polling.
   fields: {}
+refresh_meter:
+  name: Refresh meter readings
+  description: Read the gas, water and electricity meter totals once now. The 30-minute schedule is unchanged.
+  fields: {}

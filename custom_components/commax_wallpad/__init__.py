@@ -1,7 +1,7 @@
 """Commax 월패드 통합의 진입점.
 
 설정 항목마다 엘리베이터 연결, 방문자 사진 연결, logcat 스트림
-연결을 만들고 각 플랫폼이 해당 객체를 공유하도록 ``hass.data``에 보관한다.
+연결, 검침 연결을 만들고 각 플랫폼이 해당 객체를 공유하도록 ``hass.data``에 보관한다.
 """
 
 from __future__ import annotations
@@ -22,8 +22,15 @@ from homeassistant.helpers import entity_registry as er
 
 from .client import CommaxRouterClient
 from .call_diagnostics import DiagnosticJournal
-from .const import CONF_ELEVATOR_INDEX, DOMAIN, SERVICE_FAST_POLL, SERVICE_REFRESH_ELEVATOR
+from .const import (
+    CONF_ELEVATOR_INDEX,
+    DOMAIN,
+    SERVICE_FAST_POLL,
+    SERVICE_REFRESH_ELEVATOR,
+    SERVICE_REFRESH_METER,
+)
 from .coordinator import ElevatorCoordinator
+from .coordinator_meter import MeterCoordinator
 from .coordinator_visitor import VisitorCoordinator
 from .coordinator_visitor_call import VisitorCallCoordinator
 from .visitor_http import async_register_visitor_http
@@ -44,7 +51,7 @@ PLATFORMS: list[Platform] = [
 # 아래 있었는데, 그 엔티티들은 제거됐지만 빈 기기 껍데기는 레지스트리에 남아
 # HA UI에서 수동으로 지워야 했다. 아래 목록에 없는 기기는 지금 코드 어디서도
 # 다시 만들지 않으므로, 매 시작마다 안전하게 정리한다.
-_CURRENT_DEVICE_SUFFIXES = ("elevator", "visitor")
+_CURRENT_DEVICE_SUFFIXES = ("elevator", "visitor", "meter-reading")
 # 0.11.0 이전 검침 엔티티만 제거한다. Recorder 통계·다른 통합은 건드리지 않는다.
 _REMOVED_METER_SUFFIXES = (
     "realtime_electric_power", "realtime_gas_flow", "realtime_water_flow",
@@ -79,6 +86,12 @@ async def _async_handle_refresh(hass: HomeAssistant, call: ServiceCall) -> None:
     """명시적인 요청마다 엘리베이터를 한 번 갱신한다."""
     for data in hass.data.get(DOMAIN, {}).values():
         await data["elevator"].async_refresh_once()
+
+
+async def _async_handle_refresh_meter(hass: HomeAssistant, call: ServiceCall) -> None:
+    """정기 30분 조회와 별개로 검침을 한 번 읽는다(일정은 바꾸지 않음)."""
+    for data in hass.data.get(DOMAIN, {}).values():
+        await data["meter"].async_manual_read()
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
@@ -124,6 +137,18 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     )
     await visitor_call_coordinator.async_refresh()
 
+    # 검침은 30분마다 최대 12초짜리 명령을 실행한다. 방문자·엘리베이터 연결의
+    # 잠금 대기열을 막지 않도록 전용 SSH 연결을 쓴다. 첫 조회는 시작 90초 뒤다.
+    meter_client = CommaxRouterClient(
+        host=entry.data[CONF_HOST],
+        port=entry.data[CONF_PORT],
+        username=entry.data[CONF_USERNAME],
+        password=entry.data[CONF_PASSWORD],
+    )
+    meter_coordinator = MeterCoordinator(
+        hass, meter_client, visitor_coordinator, visitor_call_coordinator
+    )
+
     # 플랫폼 모듈은 이 저장소에서 동일한 SSH 연결과 coordinator를 꺼내 쓴다.
     hass.data.setdefault(DOMAIN, {})[entry.entry_id] = {
         "client": client,
@@ -132,6 +157,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         "visitor": visitor_coordinator,
         "visitor_call_client": visitor_call_client,
         "visitor_call": visitor_call_coordinator,
+        "meter_client": meter_client,
+        "meter": meter_coordinator,
         "diagnostics": diagnostics,
     }
 
@@ -151,8 +178,15 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         if not hass.services.has_service(DOMAIN, service):
             hass.services.async_register(DOMAIN, service, _service_handler)
 
+    async def _meter_service_handler(call: ServiceCall) -> None:
+        await _async_handle_refresh_meter(hass, call)
+
+    if not hass.services.has_service(DOMAIN, SERVICE_REFRESH_METER):
+        hass.services.async_register(DOMAIN, SERVICE_REFRESH_METER, _meter_service_handler)
+
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     await visitor_call_coordinator.async_start()
+    await meter_coordinator.async_start()
     return True
 
 
@@ -161,12 +195,13 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     if unload_ok:
         # 마지막 설정 항목이 내려갈 때만 공유 서비스를 제거한다.
         data = hass.data[DOMAIN].pop(entry.entry_id)
+        await data["meter"].async_stop()
         await data["visitor_call"].async_stop()
         data["visitor"].stop_observation()
         await data["diagnostics"].async_close()
         await data["client"].close()
         await data["visitor_client"].close()
         if not hass.data[DOMAIN]:
-            for service in (SERVICE_REFRESH_ELEVATOR, SERVICE_FAST_POLL):
+            for service in (SERVICE_REFRESH_ELEVATOR, SERVICE_FAST_POLL, SERVICE_REFRESH_METER):
                 hass.services.async_remove(DOMAIN, service)
     return unload_ok

@@ -2,9 +2,13 @@
 
 from __future__ import annotations
 
-from homeassistant.components.sensor import SensorDeviceClass, SensorEntity
+from homeassistant.components.sensor import (
+    SensorDeviceClass,
+    SensorEntity,
+    SensorStateClass,
+)
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.const import CONF_HOST
+from homeassistant.const import CONF_HOST, UnitOfEnergy, UnitOfVolume
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
@@ -12,6 +16,7 @@ from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .const import DOMAIN, EV_STATUS_MAP, EV_STATUS_UNKNOWN
 from .coordinator import ElevatorCoordinator
+from .coordinator_meter import MeterCoordinator, meter_device_info
 from .coordinator_visitor import VisitorCoordinator
 
 
@@ -20,10 +25,11 @@ async def async_setup_entry(
     entry: ConfigEntry,
     async_add_entities: AddEntitiesCallback,
 ) -> None:
-    # 엘리베이터 센서와 방문자 사진 센서는 각각 기존 coordinator를 공유한다.
+    # 엘리베이터·방문자·검침 센서는 각각 자기 coordinator만 공유한다.
     data = hass.data[DOMAIN][entry.entry_id]
     elevator_coordinator: ElevatorCoordinator = data["elevator"]
     visitor_coordinator: VisitorCoordinator = data["visitor"]
+    meter_coordinator: MeterCoordinator = data["meter"]
     async_add_entities(
         [
             ElevatorFloorSensor(elevator_coordinator, entry),
@@ -31,6 +37,7 @@ async def async_setup_entry(
             ElevatorStatusSensor(elevator_coordinator, entry),
             LastVisitorSensor(visitor_coordinator, entry),
             VisitorArchiveSensor(visitor_coordinator, entry),
+            *(MeterReadingSensor(meter_coordinator, entry, key) for key in _METER_SENSORS),
         ]
     )
 
@@ -241,4 +248,60 @@ class VisitorArchiveSensor(_VisitorEntityBase):
             "archive_version": self.coordinator.archive_version(),
             "last_sync": self.coordinator.data.get("archive_last_sync"),
             "error": self.coordinator.data.get("archive_error"),
+        }
+
+
+# key -> (translation_key, unit, device_class, icon)
+_METER_SENSORS = {
+    "gas": ("gas_meter_reading", UnitOfVolume.CUBIC_METERS, SensorDeviceClass.GAS, "mdi:meter-gas"),
+    "water": ("water_meter_reading", UnitOfVolume.CUBIC_METERS, SensorDeviceClass.WATER, "mdi:water"),
+    "electricity": (
+        "electricity_meter_reading",
+        UnitOfEnergy.KILO_WATT_HOUR,
+        SensorDeviceClass.ENERGY,
+        "mdi:meter-electric",
+    ),
+}
+
+
+class MeterReadingSensor(_CommaxEntityBase):
+    """계량기 누적 지침. HA 에너지 대시보드에 그대로 쓸 수 있다.
+
+    0.9.x의 추정 적산 센서와 달리 계량기가 직접 센 값이라 HA 재시작이나
+    조회 실패가 오차로 쌓이지 않는다. 계량기 교체로 값이 작아지면
+    total_increasing 규칙에 따라 HA가 리셋으로 처리한다.
+    """
+
+    _attr_state_class = SensorStateClass.TOTAL_INCREASING
+    _attr_suggested_display_precision = 1
+
+    def __init__(self, coordinator: MeterCoordinator, entry: ConfigEntry, key: str) -> None:
+        super().__init__(coordinator, entry)
+        translation_key, unit, device_class, icon = _METER_SENSORS[key]
+        self._key = key
+        self._attr_translation_key = translation_key
+        self._attr_native_unit_of_measurement = unit
+        self._attr_device_class = device_class
+        self._attr_icon = icon
+        # 0.11.0에서 제거한 실시간/추정 검침 unique ID와 겹치지 않는 새 ID.
+        self._attr_unique_id = f"{entry.entry_id}_{translation_key}"
+        self._attr_device_info = meter_device_info(entry)
+
+    @property
+    def native_value(self) -> float | None:
+        if self.coordinator.data is None:
+            return None
+        return self.coordinator.data.get(self._key)
+
+    @property
+    def extra_state_attributes(self) -> dict:
+        data = self.coordinator.data or {}
+        last_success = data.get("last_success")
+        last_attempt = data.get("last_attempt")
+        return {
+            "update_mode": "every 30 minutes (:00:30, :30:30) + manual refresh",
+            "last_successful_read": last_success.isoformat() if last_success else None,
+            "last_attempt": last_attempt.isoformat() if last_attempt else None,
+            "last_error": data.get("last_error"),
+            "last_skip_reason": data.get("last_skip_reason"),
         }

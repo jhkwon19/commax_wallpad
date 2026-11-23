@@ -28,6 +28,9 @@
       },
       "refresh_elevator": {
         "name": "엘리베이터 상태 새로고침"
+      },
+      "refresh_meter": {
+        "name": "검침 지금 조회"
       }
     },
     "sensor": {
@@ -45,6 +48,15 @@
       },
       "visitor_archive": {
         "name": "방문자 아카이브"
+      },
+      "gas_meter_reading": {
+        "name": "가스 누적 사용량"
+      },
+      "water_meter_reading": {
+        "name": "수도 누적 사용량"
+      },
+      "electricity_meter_reading": {
+        "name": "전기 누적 사용량"
       }
     },
     "image": {
@@ -74,6 +86,10 @@
     "refresh_elevator": {
       "name": "엘리베이터 상태 새로고침",
       "description": "엘리베이터 상태·운행 방향·층수를 한 번 조회합니다. 자동 반복하지 않습니다."
+    },
+    "refresh_meter": {
+      "name": "검침 지금 조회",
+      "description": "가스·수도·전기 누적 지침을 지금 한 번 읽습니다. 30분 정기 조회 일정은 그대로입니다."
     }
   }
 }

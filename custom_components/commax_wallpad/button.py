@@ -1,4 +1,4 @@
-"""Commax 엘리베이터 호출 버튼 플랫폼.
+"""Commax 엘리베이터 호출·조회와 검침 수동 조회 버튼 플랫폼.
 
 버튼은 라우터의 검증된 단발 도우미만 실행한다. SOAP 생성, 월패드 IP/MAC 사용,
 순간적인 flood 차단과 원복은 모두 라우터 스크립트가 책임진다.
@@ -21,6 +21,7 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from .client import CommaxRouterClient
 from .const import DOMAIN, EV_STATUS_MAP, EV_STATUS_NORMAL, EV_STATUS_UNKNOWN
 from .coordinator import ElevatorCoordinator
+from .coordinator_meter import MeterCoordinator, meter_device_info
 
 # 이 세대는 17층이므로 캡처에서 확인한 아래 방향(callDown=1)을 사용한다.
 _CALL_HELPER = "/root/wallpad-elevator-call.sh down"
@@ -41,6 +42,7 @@ async def async_setup_entry(
         [
             ElevatorCallButton(data["client"], data["elevator"], entry),
             ElevatorRefreshButton(data["elevator"], entry),
+            MeterRefreshButton(data["meter"], entry),
         ]
     )
 
@@ -126,3 +128,19 @@ class ElevatorRefreshButton(ButtonEntity):
 
     async def async_press(self) -> None:
         await self._coordinator.async_refresh_once()
+
+
+class MeterRefreshButton(ButtonEntity):
+    """30분 정기 조회를 기다리지 않고 계량기 누적 지침을 한 번 읽는다."""
+
+    _attr_has_entity_name = True
+    _attr_translation_key = "refresh_meter"
+    _attr_icon = "mdi:refresh"
+
+    def __init__(self, coordinator: MeterCoordinator, entry: ConfigEntry) -> None:
+        self._coordinator = coordinator
+        self._attr_unique_id = f"{entry.entry_id}_refresh_meter"
+        self._attr_device_info = meter_device_info(entry)
+
+    async def async_press(self) -> None:
+        await self._coordinator.async_manual_read()
