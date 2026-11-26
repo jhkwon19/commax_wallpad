@@ -30,8 +30,11 @@ _SCREEN_EPOCH = re.compile(r"^HA_WALLPAD_SCREEN_EPOCH=(\d{1,12})$", re.MULTILINE
 _PACKAGE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)+")
 _COMPONENT = re.compile(r"\s([A-Za-z0-9_.]+/[A-Za-z0-9_.$]+)(?=\s|})")
 _BOUNDS = re.compile(r"\[(\d{1,4}),(\d{1,4})\]\[(\d{1,4}),(\d{1,4})\]")
-_CDP_LOBBY_COMPONENT = "com.commax.sipua/com.commax.sipua.SipCallView"
-_CDP_LOBBY_TITLE = re.compile(r"(?:[0-9]+\.\s*)?공동현관\s*:\s*호출이 왔습니다")
+_CDP_CALL_COMPONENT = "com.commax.sipua/com.commax.sipua.SipCallView"
+_CDP_CALL_TITLES = {
+    LOBBY_PLACE: re.compile(r"(?:[0-9]+\.\s*)?공동현관\s*:\s*호출이 왔습니다"),
+    HOUSEHOLD_PLACE: re.compile(r"(?:[0-9]+\.\s*)?우리집 현관\s*:\s*호출이 왔습니다"),
+}
 _CDP_UNLOCK_BOUNDS = "[600,481][688,569]"
 _CDP_CALL_BUTTON_BOUNDS = {"[336,481][424,569]", "[468,481][556,569]", _CDP_UNLOCK_BOUNDS}
 _CDP_LAYOUT_MARKER = "CDP-1020MB"
@@ -50,7 +53,7 @@ class IntercomProfile:
         screen = options.get(CONF_INTERCOM_SCREEN, "").strip()
         unlock = options.get(CONF_INTERCOM_UNLOCK, "").strip()
         if unlock == _CDP_LAYOUT_MARKER:
-            if package == _CDP_LOBBY_COMPONENT.split("/", 1)[0] and not screen:
+            if package == _CDP_CALL_COMPONENT.split("/", 1)[0] and not screen:
                 return cls(package, screen, unlock)
             return None
         if _PACKAGE.fullmatch(package) and screen and unlock and screen != unlock:
@@ -79,15 +82,22 @@ def lobby_floor(location: str | None) -> str | None:
     return _FLOORS.get(location)
 
 
-def active_lobby_call(data: dict | None) -> int | None:
-    if not data or not data.get("connected") or not data.get("active"):
+def active_intercom_call(
+    data: dict | None, profile: IntercomProfile | None
+) -> tuple[str, int] | None:
+    if profile is None or not data or not data.get("connected") or not data.get("active"):
         return None
-    if data.get("place") != LOBBY_PLACE or data.get("last_event") != "ringing":
+    place, event_id = data.get("place"), data.get("last_event_id")
+    if data.get("last_event") != "ringing" or event_id is None:
         return None
-    return data.get("last_event_id")
+    if place == LOBBY_PLACE or (place == HOUSEHOLD_PLACE and profile.unlock_marker == _CDP_LAYOUT_MARKER):
+        return place, event_id
+    return None
 
 
-def unlock_target(output: str, profile: IntercomProfile) -> UnlockTarget | None:
+def unlock_target(
+    output: str, profile: IntercomProfile, place: str
+) -> UnlockTarget | None:
     """Require an exact call-screen marker and a unique enabled control."""
     start = output.find("<hierarchy")
     end = output.find("</hierarchy>", start)
@@ -116,17 +126,19 @@ def unlock_target(output: str, profile: IntercomProfile) -> UnlockTarget | None:
         ]
 
     if profile.unlock_marker == _CDP_LAYOUT_MARKER:
+        title = _CDP_CALL_TITLES.get(place)
         buttons = [
             node for node in nodes if node.get("class") == "android.widget.ImageView"
             and node.get("clickable") == "true" and node.get("enabled") == "true"
         ]
         if (
-            focus[1] != _CDP_LOBBY_COMPONENT
+            title is None
+            or focus[1] != _CDP_CALL_COMPONENT
             or hierarchy.get("rotation", "0") != "0"
             or not any(node.get("bounds") == "[0,0][1024,600]" for node in nodes)
             or not any(
                 node.get("class") == "android.widget.TextView"
-                and _CDP_LOBBY_TITLE.fullmatch(node.get("text", ""))
+                and title.fullmatch(node.get("text", ""))
                 for node in nodes
             )
             or not _CDP_CALL_BUTTON_BOUNDS <= {node.get("bounds") for node in buttons}
@@ -134,7 +146,7 @@ def unlock_target(output: str, profile: IntercomProfile) -> UnlockTarget | None:
             return None
         controls = [node for node in buttons if node.get("bounds") == _CDP_UNLOCK_BOUNDS]
     else:
-        if not matching(profile.screen_marker):
+        if place != LOBBY_PLACE or not matching(profile.screen_marker):
             return None
         controls = matching(profile.unlock_marker)
     if len(controls) != 1:

@@ -28,7 +28,7 @@ from .intercom import (
     READ_SCREEN_COMMAND,
     TAP_CONFIRMED,
     IntercomProfile,
-    active_lobby_call,
+    active_intercom_call,
     intercom_device_info,
     tap_command,
     unlock_target,
@@ -160,7 +160,7 @@ class MeterRefreshButton(ButtonEntity):
 
 
 class IntercomUnlockButton(CoordinatorEntity, ButtonEntity):
-    """Press the wallpad's visible unlock control once per lobby call."""
+    """Press the wallpad's visible unlock control once per matching call."""
 
     _attr_has_entity_name = True
     _attr_translation_key = "unlock_lobby"
@@ -176,35 +176,35 @@ class IntercomUnlockButton(CoordinatorEntity, ButtonEntity):
         self._client = client
         self._profile = IntercomProfile.from_options(entry.options)
         self._press_lock = asyncio.Lock()
-        self._attempted_call: int | None = None
+        self._attempted_call: tuple[str, int] | None = None
         self._attr_unique_id = f"{entry.entry_id}_unlock_lobby"
         self._attr_device_info = intercom_device_info(entry)
 
     @property
     def available(self) -> bool:
-        call = active_lobby_call(self.coordinator.data)
-        return self._profile is not None and call is not None and call != self._attempted_call
+        call = active_intercom_call(self.coordinator.data, self._profile)
+        return call is not None and call != self._attempted_call
 
     async def async_press(self) -> None:
         async with self._press_lock:
             profile = self._profile
-            call = active_lobby_call(self.coordinator.data)
+            call = active_intercom_call(self.coordinator.data, self._profile)
             if profile is None or call is None or call == self._attempted_call:
-                raise HomeAssistantError("공동현관 호출 화면에서 문 열기를 사용할 수 없습니다.")
+                raise HomeAssistantError("현재 호출에서 문 열기를 사용할 수 없습니다.")
 
             try:
                 screen = await self._client.exec(READ_SCREEN_COMMAND, timeout=10, retry=False)
                 # The call window can temporarily expose no accessibility tree.
-                if "<hierarchy" not in screen and active_lobby_call(self.coordinator.data) == call:
+                if "<hierarchy" not in screen and active_intercom_call(self.coordinator.data, self._profile) == call:
                     await asyncio.sleep(0.4)
-                    if active_lobby_call(self.coordinator.data) == call:
+                    if active_intercom_call(self.coordinator.data, self._profile) == call:
                         screen = await self._client.exec(
                             READ_SCREEN_COMMAND, timeout=10, retry=False
                         )
-                target = unlock_target(screen, profile)
-                if target is None or active_lobby_call(self.coordinator.data) != call:
+                target = unlock_target(screen, profile, call[0])
+                if target is None or active_intercom_call(self.coordinator.data, self._profile) != call:
                     raise HomeAssistantError(
-                        "현재 공동현관 호출 화면의 문 열기 버튼을 확인할 수 없습니다."
+                        "현재 호출과 일치하는 화면에서 문 열기 버튼을 확인할 수 없습니다."
                     )
 
                 # An interrupted SSH reply can leave the tap outcome unknown.
