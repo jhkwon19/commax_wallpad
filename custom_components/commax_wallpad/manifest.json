@@ -1,7 +1,7 @@
 {
   "domain": "commax_wallpad",
   "name": "Commax Wallpad (MITM)",
-  "version": "0.13.1",
+  "version": "0.13.2",
   "config_flow": true,
   "documentation": "https://github.com/jhkwon19/wallpad-project",
   "requirements": [

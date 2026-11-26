@@ -121,7 +121,7 @@ class IntercomOptionsFlow(OptionsFlowWithReload):
         errors = {}
         if user_input is not None:
             values = {key: user_input.get(key, "").strip() for key in _INTERCOM_OPTIONS}
-            if any(values.values()) and IntercomProfile.from_options(values) is None:
+            if IntercomProfile.from_options(values) is None:
                 errors["base"] = "invalid_intercom_profile"
             else:
                 return self.async_create_entry(

@@ -30,7 +30,8 @@ _SCREEN_EPOCH = re.compile(r"^HA_WALLPAD_SCREEN_EPOCH=(\d{1,12})$", re.MULTILINE
 _PACKAGE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)+")
 _COMPONENT = re.compile(r"\s([A-Za-z0-9_.]+/[A-Za-z0-9_.$]+)(?=\s|})")
 _BOUNDS = re.compile(r"\[(\d{1,4}),(\d{1,4})\]\[(\d{1,4}),(\d{1,4})\]")
-_CDP_CALL_COMPONENT = "com.commax.sipua/com.commax.sipua.SipCallView"
+_CDP_PACKAGE = "com.commax.sipua"
+_CDP_CALL_COMPONENT = f"{_CDP_PACKAGE}/{_CDP_PACKAGE}.SipCallView"
 _CDP_CALL_TITLES = {
     LOBBY_PLACE: re.compile(r"(?:[0-9]+\.\s*)?공동현관\s*:\s*호출이 왔습니다"),
     HOUSEHOLD_PLACE: re.compile(r"(?:[0-9]+\.\s*)?우리집 현관\s*:\s*호출이 왔습니다"),
@@ -52,8 +53,10 @@ class IntercomProfile:
         package = options.get(CONF_INTERCOM_PACKAGE, "").strip()
         screen = options.get(CONF_INTERCOM_SCREEN, "").strip()
         unlock = options.get(CONF_INTERCOM_UNLOCK, "").strip()
+        if not (package or screen or unlock):
+            return cls(_CDP_PACKAGE, "", _CDP_LAYOUT_MARKER)
         if unlock == _CDP_LAYOUT_MARKER:
-            if package == _CDP_CALL_COMPONENT.split("/", 1)[0] and not screen:
+            if package == _CDP_PACKAGE and not screen:
                 return cls(package, screen, unlock)
             return None
         if _PACKAGE.fullmatch(package) and screen and unlock and screen != unlock:

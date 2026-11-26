@@ -105,7 +105,7 @@
     "step": {
       "init": {
         "title": "Wallpad unlock settings",
-        "description": "The CDP-1020MB layout supports lobby and unit entrance calls. For other wallpads, enter the exact markers from the lobby call screen. Leave all fields blank to disable the button.",
+        "description": "Leave all fields blank to use the verified CDP-1020MB layout. Enter markers only to use a different wallpad's lobby call screen.",
         "data": {
           "intercom_package": "Wallpad app package",
           "intercom_screen": "Lobby call screen marker",
@@ -113,7 +113,7 @@
         },
         "data_description": {
           "intercom_screen": "Exact resource ID, text or content description. Leave blank when using the CDP-1020MB screen layout.",
-          "intercom_unlock": "Exact resource ID, button text or content description. Enter CDP-1020MB to use the verified screen layout."
+          "intercom_unlock": "Exact resource ID, text or content description from the other wallpad's unlock button."
         }
       }
     },
