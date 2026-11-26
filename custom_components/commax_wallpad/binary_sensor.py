@@ -14,6 +14,7 @@ from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .const import DOMAIN
 from .coordinator_visitor_call import VisitorCallCoordinator
+from .intercom import HOUSEHOLD_PLACE, LOBBY_PLACE, intercom_device_info
 
 
 async def async_setup_entry(
@@ -27,6 +28,8 @@ async def async_setup_entry(
     async_add_entities(
         [
             VisitorCallActiveBinarySensor(coordinator, entry),
+            IntercomCallBinarySensor(coordinator, entry, LOBBY_PLACE, "lobby_call"),
+            IntercomCallBinarySensor(coordinator, entry, HOUSEHOLD_PLACE, "household_call"),
         ]
     )
 
@@ -73,3 +76,38 @@ class VisitorCallActiveBinarySensor(CoordinatorEntity, BinarySensorEntity):
             "monitor_connected": data.get("connected"),
             "monitor_error": data.get("error"),
         }
+
+
+
+class IntercomCallBinarySensor(CoordinatorEntity, BinarySensorEntity):
+    """Show the current call and retain the last call for this entrance."""
+
+    _attr_has_entity_name = True
+    _attr_icon = "mdi:doorbell"
+
+    def __init__(
+        self, coordinator: VisitorCallCoordinator, entry: ConfigEntry, place: str, key: str
+    ) -> None:
+        super().__init__(coordinator)
+        self._place = place
+        self._attr_translation_key = key
+        self._attr_unique_id = f"{entry.entry_id}_{key}"
+        self._attr_device_info = intercom_device_info(entry)
+
+    @property
+    def available(self) -> bool:
+        return bool((self.coordinator.data or {}).get("connected"))
+
+    @property
+    def is_on(self) -> bool:
+        data = self.coordinator.data or {}
+        return bool(self.available and data.get("active") and data.get("place") == self._place)
+
+    @property
+    def extra_state_attributes(self) -> dict:
+        data = self.coordinator.data or {}
+        latest = data.get("intercom_calls", {}).get(self._place, {})
+        attributes = {"location": latest.get("location"), "started_at": latest.get("started_at")}
+        if self._place == LOBBY_PLACE:
+            attributes["floor"] = latest.get("floor")
+        return attributes

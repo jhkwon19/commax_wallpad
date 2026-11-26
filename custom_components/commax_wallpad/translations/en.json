@@ -31,6 +31,9 @@
       },
       "refresh_meter": {
         "name": "Refresh meter readings"
+      },
+      "unlock_lobby": {
+        "name": "Unlock lobby door"
       }
     },
     "sensor": {
@@ -67,6 +70,12 @@
     "binary_sensor": {
       "visitor_call_active": {
         "name": "Visitor call active"
+      },
+      "lobby_call": {
+        "name": "Lobby call"
+      },
+      "household_call": {
+        "name": "Unit entrance call"
       }
     },
     "event": {
@@ -90,6 +99,26 @@
     "refresh_meter": {
       "name": "Refresh meter readings",
       "description": "Read the gas, water and electricity meter totals once now. The 30-minute schedule is unchanged."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Wallpad unlock settings",
+        "description": "Enter the exact markers from the wallpad lobby call screen. Leave all fields blank to disable the unlock button.",
+        "data": {
+          "intercom_package": "Wallpad app package",
+          "intercom_screen": "Lobby call screen marker",
+          "intercom_unlock": "Unlock button marker"
+        },
+        "data_description": {
+          "intercom_screen": "Exact resource ID, text or content description. Leave blank when using the CDP-1020MB screen layout.",
+          "intercom_unlock": "Exact resource ID, button text or content description. Enter CDP-1020MB to use the verified screen layout."
+        }
+      }
+    },
+    "error": {
+      "invalid_intercom_profile": "Check the package and screen and button markers. CDP-1020MB uses com.commax.sipua and a blank screen marker."
     }
   }
 }

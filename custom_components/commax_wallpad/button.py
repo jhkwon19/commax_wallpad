@@ -17,11 +17,22 @@ from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.entity import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
+from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .client import CommaxRouterClient
 from .const import DOMAIN, EV_STATUS_MAP, EV_STATUS_NORMAL, EV_STATUS_UNKNOWN
 from .coordinator import ElevatorCoordinator
 from .coordinator_meter import MeterCoordinator, meter_device_info
+from .coordinator_visitor_call import VisitorCallCoordinator
+from .intercom import (
+    READ_SCREEN_COMMAND,
+    TAP_CONFIRMED,
+    IntercomProfile,
+    active_lobby_call,
+    intercom_device_info,
+    tap_command,
+    unlock_target,
+)
 
 # 이 세대는 17층이므로 캡처에서 확인한 아래 방향(callDown=1)을 사용한다.
 _CALL_HELPER = "/root/wallpad-elevator-call.sh down"
@@ -43,6 +54,7 @@ async def async_setup_entry(
             ElevatorCallButton(data["client"], data["elevator"], entry),
             ElevatorRefreshButton(data["elevator"], entry),
             MeterRefreshButton(data["meter"], entry),
+            IntercomUnlockButton(data["visitor_client"], data["visitor_call"], entry),
         ]
     )
 
@@ -144,3 +156,67 @@ class MeterRefreshButton(ButtonEntity):
 
     async def async_press(self) -> None:
         await self._coordinator.async_manual_read()
+
+
+
+class IntercomUnlockButton(CoordinatorEntity, ButtonEntity):
+    """Press the wallpad's visible unlock control once per lobby call."""
+
+    _attr_has_entity_name = True
+    _attr_translation_key = "unlock_lobby"
+    _attr_icon = "mdi:door-open"
+
+    def __init__(
+        self,
+        client: CommaxRouterClient,
+        coordinator: VisitorCallCoordinator,
+        entry: ConfigEntry,
+    ) -> None:
+        super().__init__(coordinator)
+        self._client = client
+        self._profile = IntercomProfile.from_options(entry.options)
+        self._press_lock = asyncio.Lock()
+        self._attempted_call: int | None = None
+        self._attr_unique_id = f"{entry.entry_id}_unlock_lobby"
+        self._attr_device_info = intercom_device_info(entry)
+
+    @property
+    def available(self) -> bool:
+        call = active_lobby_call(self.coordinator.data)
+        return self._profile is not None and call is not None and call != self._attempted_call
+
+    async def async_press(self) -> None:
+        async with self._press_lock:
+            profile = self._profile
+            call = active_lobby_call(self.coordinator.data)
+            if profile is None or call is None or call == self._attempted_call:
+                raise HomeAssistantError("공동현관 호출 화면에서 문 열기를 사용할 수 없습니다.")
+
+            try:
+                screen = await self._client.exec(READ_SCREEN_COMMAND, timeout=10, retry=False)
+                # The call window can temporarily expose no accessibility tree.
+                if "<hierarchy" not in screen and active_lobby_call(self.coordinator.data) == call:
+                    await asyncio.sleep(0.4)
+                    if active_lobby_call(self.coordinator.data) == call:
+                        screen = await self._client.exec(
+                            READ_SCREEN_COMMAND, timeout=10, retry=False
+                        )
+                target = unlock_target(screen, profile)
+                if target is None or active_lobby_call(self.coordinator.data) != call:
+                    raise HomeAssistantError(
+                        "현재 공동현관 호출 화면의 문 열기 버튼을 확인할 수 없습니다."
+                    )
+
+                # An interrupted SSH reply can leave the tap outcome unknown.
+                self._attempted_call = call
+                self.async_write_ha_state()
+                result = await self._client.exec(
+                    tap_command(target), timeout=4, retry=False
+                )
+            except HomeAssistantError:
+                raise
+            except Exception as err:
+                raise HomeAssistantError("월패드 화면 확인 또는 터치 요청에 실패했습니다.") from err
+
+            if TAP_CONFIRMED not in result.splitlines():
+                raise HomeAssistantError("월패드가 터치 요청을 확인하지 않았습니다.")

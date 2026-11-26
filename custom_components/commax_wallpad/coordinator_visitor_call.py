@@ -10,6 +10,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
 
 from .client import CommaxRouterClient
+from .intercom import HOUSEHOLD_PLACE, LOBBY_PLACE, lobby_floor
 from .coordinator_visitor import LOBBY_LOCATION_BY_DISPLAY_NAME, VisitorCoordinator
 
 _LOGGER = logging.getLogger(__name__)
@@ -41,6 +42,7 @@ class VisitorCallCoordinator(DataUpdateCoordinator[dict]):
         self._reconnect_count = 0
         self.data = {
             "active": False,
+            "intercom_calls": {},
             "state": "idle",
             "location": None,
             "place": None,
@@ -130,6 +132,8 @@ class VisitorCallCoordinator(DataUpdateCoordinator[dict]):
         }
         if connected:
             updated["last_connected_at"] = datetime.now(tz=UTC)
+        else:
+            updated.update(active=False, state="idle")
         self.async_set_updated_data(updated)
 
     async def _async_handle_line(self, line: str) -> None:
@@ -167,6 +171,15 @@ class VisitorCallCoordinator(DataUpdateCoordinator[dict]):
         }
 
         if event_type == "ringing":
+            if place in (LOBBY_PLACE, HOUSEHOLD_PLACE):
+                updated["intercom_calls"] = {
+                    **self.data["intercom_calls"],
+                    place: {
+                        "location": location if place == LOBBY_PLACE else _LOCATION_BY_PLACE[place],
+                        "started_at": event_time,
+                        "floor": lobby_floor(location) if place == LOBBY_PLACE else None,
+                    },
+                }
             updated.update(
                 {
                     "active": True,

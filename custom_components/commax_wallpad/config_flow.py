@@ -15,8 +15,9 @@ with warnings.catch_warnings():
     import asyncssh
 
 import voluptuous as vol
-from homeassistant.config_entries import ConfigFlow
+from homeassistant.config_entries import ConfigEntry, ConfigFlow, OptionsFlowWithReload
 from homeassistant.const import CONF_HOST, CONF_PASSWORD, CONF_PORT, CONF_USERNAME
+from homeassistant.core import callback
 from homeassistant.data_entry_flow import FlowResult
 
 from .const import (
@@ -27,6 +28,14 @@ from .const import (
     DOMAIN,
 )
 
+from .intercom import (
+    CONF_INTERCOM_PACKAGE,
+    CONF_INTERCOM_SCREEN,
+    CONF_INTERCOM_UNLOCK,
+    IntercomProfile,
+)
+
+_INTERCOM_OPTIONS = (CONF_INTERCOM_PACKAGE, CONF_INTERCOM_SCREEN, CONF_INTERCOM_UNLOCK)
 _LOGGER = logging.getLogger(__name__)
 
 # 동/호수와 월패드 MAC은 라우터 도우미가 관리한다. HA 설정에는 관리망 SSH와
@@ -61,6 +70,11 @@ class CommaxElevatorConfigFlow(ConfigFlow, domain=DOMAIN):
 
     VERSION = 1
 
+    @staticmethod
+    @callback
+    def async_get_options_flow(config_entry: ConfigEntry) -> OptionsFlowWithReload:
+        return IntercomOptionsFlow()
+
     async def async_step_user(
         self, user_input: dict[str, Any] | None = None
     ) -> FlowResult:
@@ -93,4 +107,32 @@ class CommaxElevatorConfigFlow(ConfigFlow, domain=DOMAIN):
 
         return self.async_show_form(
             step_id="user", data_schema=DATA_SCHEMA, errors=errors
+        )
+
+
+
+class IntercomOptionsFlow(OptionsFlowWithReload):
+    """Configure the markers identified on the actual wallpad call screen."""
+
+    async def async_step_init(self, user_input: dict[str, Any] | None = None) -> FlowResult:
+        values = {
+            key: self.config_entry.options.get(key, "") for key in _INTERCOM_OPTIONS
+        }
+        errors = {}
+        if user_input is not None:
+            values = {key: user_input.get(key, "").strip() for key in _INTERCOM_OPTIONS}
+            if any(values.values()) and IntercomProfile.from_options(values) is None:
+                errors["base"] = "invalid_intercom_profile"
+            else:
+                return self.async_create_entry(
+                    data={**self.config_entry.options, **values}
+                )
+
+        return self.async_show_form(
+            step_id="init",
+            data_schema=vol.Schema({
+                vol.Optional(key, description={"suggested_value": value}): str
+                for key, value in values.items()
+            }),
+            errors=errors,
         )

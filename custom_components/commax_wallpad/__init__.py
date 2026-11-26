@@ -51,7 +51,7 @@ PLATFORMS: list[Platform] = [
 # 아래 있었는데, 그 엔티티들은 제거됐지만 빈 기기 껍데기는 레지스트리에 남아
 # HA UI에서 수동으로 지워야 했다. 아래 목록에 없는 기기는 지금 코드 어디서도
 # 다시 만들지 않으므로, 매 시작마다 안전하게 정리한다.
-_CURRENT_DEVICE_SUFFIXES = ("elevator", "visitor", "meter-reading")
+_CURRENT_DEVICE_SUFFIXES = ("elevator", "visitor", "meter-reading", "intercom")
 # 0.11.0 이전 검침 엔티티만 제거한다. Recorder 통계·다른 통합은 건드리지 않는다.
 _REMOVED_METER_SUFFIXES = (
     "realtime_electric_power", "realtime_gas_flow", "realtime_water_flow",

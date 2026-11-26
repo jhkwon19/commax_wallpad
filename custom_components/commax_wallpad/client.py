@@ -80,15 +80,16 @@ class CommaxRouterClient:
             rekey_seconds=86400,
         )
 
-    async def exec(self, command: str, timeout: int = 10) -> str:
+    async def exec(
+        self, command: str, timeout: int = 10, *, retry: bool = True
+    ) -> str:
         """라우터에서 `command`를 실행하고 stdout을 문자열로 반환한다.
 
-        실패 시 재연결 후 1회 재시도하므로, 연결이 한 번 끊기는 정도는
-        호출자에게 드러나지 않는다.
+        기본값은 실패 시 재연결 후 1회 재시도한다. 물리 동작은 retry=False로 호출한다.
         """
         async with self._lock:
             last_err: Exception | None = None
-            for _attempt in range(2):
+            for _attempt in range(2 if retry else 1):
                 try:
                     # 정상일 때는 기존 연결을 계속 쓰고, 실제 명령 실패가 난
                     # 경우에만 아래 except에서 연결을 버리고 한 번 재접속한다.
