@@ -160,7 +160,7 @@ class MeterRefreshButton(ButtonEntity):
 
 
 class IntercomUnlockButton(CoordinatorEntity, ButtonEntity):
-    """Press the wallpad's visible unlock control once per matching call."""
+    """Press the wallpad's visible unlock control on each explicit press."""
 
     _attr_has_entity_name = True
     _attr_translation_key = "unlock_lobby"
@@ -175,48 +175,48 @@ class IntercomUnlockButton(CoordinatorEntity, ButtonEntity):
         super().__init__(coordinator)
         self._client = client
         self._profile = IntercomProfile.from_options(entry.options)
-        self._press_lock = asyncio.Lock()
-        self._attempted_call: tuple[str, int] | None = None
+        self._press_in_progress = False
         self._attr_unique_id = f"{entry.entry_id}_unlock_lobby"
         self._attr_device_info = intercom_device_info(entry)
 
     @property
     def available(self) -> bool:
         call = active_intercom_call(self.coordinator.data, self._profile)
-        return call is not None and call != self._attempted_call
+        return call is not None and not self._press_in_progress
 
     async def async_press(self) -> None:
-        async with self._press_lock:
-            profile = self._profile
-            call = active_intercom_call(self.coordinator.data, self._profile)
-            if profile is None or call is None or call == self._attempted_call:
-                raise HomeAssistantError("현재 호출에서 문 열기를 사용할 수 없습니다.")
+        if self._press_in_progress:
+            raise HomeAssistantError("이전 문 열기 요청을 처리하고 있습니다.")
 
-            try:
-                screen = await self._client.exec(READ_SCREEN_COMMAND, timeout=10, retry=False)
-                # The call window can temporarily expose no accessibility tree.
-                if "<hierarchy" not in screen and active_intercom_call(self.coordinator.data, self._profile) == call:
-                    await asyncio.sleep(0.4)
-                    if active_intercom_call(self.coordinator.data, self._profile) == call:
-                        screen = await self._client.exec(
-                            READ_SCREEN_COMMAND, timeout=10, retry=False
-                        )
-                target = unlock_target(screen, profile, call[0])
-                if target is None or active_intercom_call(self.coordinator.data, self._profile) != call:
-                    raise HomeAssistantError(
-                        "현재 호출과 일치하는 화면에서 문 열기 버튼을 확인할 수 없습니다."
+        profile = self._profile
+        call = active_intercom_call(self.coordinator.data, profile)
+        if profile is None or call is None:
+            raise HomeAssistantError("현재 호출에서 문 열기를 사용할 수 없습니다.")
+
+        self._press_in_progress = True
+        try:
+            self.async_write_ha_state()
+            screen = await self._client.exec(READ_SCREEN_COMMAND, timeout=10, retry=False)
+            # The call window can temporarily expose no accessibility tree.
+            if "<hierarchy" not in screen and active_intercom_call(self.coordinator.data, profile) == call:
+                await asyncio.sleep(0.4)
+                if active_intercom_call(self.coordinator.data, profile) == call:
+                    screen = await self._client.exec(
+                        READ_SCREEN_COMMAND, timeout=10, retry=False
                     )
-
-                # An interrupted SSH reply can leave the tap outcome unknown.
-                self._attempted_call = call
-                self.async_write_ha_state()
-                result = await self._client.exec(
-                    tap_command(target), timeout=4, retry=False
+            target = unlock_target(screen, profile, call[0])
+            if target is None or active_intercom_call(self.coordinator.data, profile) != call:
+                raise HomeAssistantError(
+                    "현재 호출과 일치하는 화면에서 문 열기 버튼을 확인할 수 없습니다."
                 )
-            except HomeAssistantError:
-                raise
-            except Exception as err:
-                raise HomeAssistantError("월패드 화면 확인 또는 터치 요청에 실패했습니다.") from err
 
+            result = await self._client.exec(tap_command(target), timeout=4, retry=False)
             if TAP_CONFIRMED not in result.splitlines():
                 raise HomeAssistantError("월패드가 터치 요청을 확인하지 않았습니다.")
+        except HomeAssistantError:
+            raise
+        except Exception as err:
+            raise HomeAssistantError("월패드 화면 확인 또는 터치 요청에 실패했습니다.") from err
+        finally:
+            self._press_in_progress = False
+            self.async_write_ha_state()
