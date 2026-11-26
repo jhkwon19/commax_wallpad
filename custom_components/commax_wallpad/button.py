@@ -196,15 +196,14 @@ class IntercomUnlockButton(CoordinatorEntity, ButtonEntity):
         self._press_in_progress = True
         try:
             self.async_write_ha_state()
-            screen = await self._client.exec(READ_SCREEN_COMMAND, timeout=10, retry=False)
-            # The call window can temporarily expose no accessibility tree.
-            if "<hierarchy" not in screen and active_intercom_call(self.coordinator.data, profile) == call:
-                await asyncio.sleep(0.4)
-                if active_intercom_call(self.coordinator.data, profile) == call:
-                    screen = await self._client.exec(
-                        READ_SCREEN_COMMAND, timeout=10, retry=False
-                    )
-            target = unlock_target(screen, profile, call[0])
+            target = None
+            for _ in range(2):
+                if active_intercom_call(self.coordinator.data, profile) != call:
+                    break
+                screen = await self._client.exec(READ_SCREEN_COMMAND, timeout=10, retry=False)
+                target = unlock_target(screen, profile, call[0])
+                if target is not None:
+                    break
             if target is None or active_intercom_call(self.coordinator.data, profile) != call:
                 raise HomeAssistantError(
                     "현재 호출과 일치하는 화면에서 문 열기 버튼을 확인할 수 없습니다."

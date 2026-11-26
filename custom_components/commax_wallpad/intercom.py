@@ -22,9 +22,11 @@ TAP_CONFIRMED = "HA_WALLPAD_TAP_SENT"
 READ_SCREEN_COMMAND = (
     'path="/data/local/tmp/ha-intercom-$$.xml"; '
     'trap \'adb shell "rm -f $path" >/dev/null 2>&1\' EXIT; '
+    # The SIP event can arrive before the call activity gains focus.
+    'adb shell "uiautomator dump $path >/dev/null 2>&1"; '
+    'printf "HA_WALLPAD_SCREEN_EPOCH=%s\n" "$(date +%s)"; '
     'adb shell dumpsys window windows | grep -F "mCurrentFocus="; '
-    'adb shell "uiautomator dump $path >/dev/null 2>&1" && '
-    'printf "HA_WALLPAD_SCREEN_EPOCH=%s\n" "$(date +%s)" && adb shell "cat $path"'
+    'adb shell "cat $path"'
 )
 _SCREEN_EPOCH = re.compile(r"^HA_WALLPAD_SCREEN_EPOCH=(\d{1,12})$", re.MULTILINE)
 _PACKAGE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)+")
